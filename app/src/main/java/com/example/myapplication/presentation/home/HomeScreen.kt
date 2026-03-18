@@ -1,6 +1,7 @@
 package com.example.myapplication.presentation.home
 
 import android.Manifest
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -12,7 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel   // 🔧 添加这行导入
 import com.example.myapplication.core.utils.SpeechRecognizerHelper
 import com.example.myapplication.map.MapViewComposable
 import com.google.accompanist.permissions.*
@@ -20,12 +21,27 @@ import com.google.accompanist.permissions.*
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun HomeScreen(
-    viewModel: HomeViewModel = viewModel(),
+    viewModel: HomeViewModel = hiltViewModel(),   // 使用 Hilt 提供的 ViewModel
     onNavigateToOrder: (Long) -> Unit
 ) {
     val context = LocalContext.current
     val destination by viewModel.destination.collectAsState()
     val orderState by viewModel.orderState.collectAsState()
+
+    // 使用 remember 保存语音识别助手实例，避免每次重组重新创建
+    val speechHelper = remember {
+        SpeechRecognizerHelper(context) { result ->
+            // 语音识别结果回调，更新目的地
+            viewModel.updateDestination(result)
+        }
+    }
+
+    // 在组件卸载时释放语音识别资源
+    DisposableEffect(Unit) {
+        onDispose {
+            speechHelper.destroy()
+        }
+    }
 
     val audioPermissionState = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
     val locationPermissionState = rememberPermissionState(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -65,10 +81,7 @@ fun HomeScreen(
                 IconButton(
                     onClick = {
                         if (audioPermissionState.status.isGranted) {
-                            val helper = SpeechRecognizerHelper(context) { result ->
-                                viewModel.updateDestination(result)
-                            }
-                            helper.startListening()
+                            speechHelper.startListening()
                         } else {
                             Toast.makeText(context, "需要录音权限", Toast.LENGTH_SHORT).show()
                             audioPermissionState.launchPermissionRequest()
@@ -87,6 +100,8 @@ fun HomeScreen(
 
         Button(
             onClick = {
+                // 添加日志调试，确认当前目的地
+                Log.d("HomeScreen", "点击叫车，目的地：$destination")
                 viewModel.createOrder(destination, 39.9087, 116.3975)
             },
             modifier = Modifier

@@ -22,15 +22,29 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.myapplication.presentation.home.HomeScreen
 import com.example.myapplication.presentation.login.LoginScreen
+import com.example.myapplication.presentation.order.OrderDetailScreen
+import com.example.myapplication.presentation.order.OrderListScreen
 import com.example.myapplication.presentation.profile.ProfileScreen
-import com.example.myapplication.presentation.order.OrderDetailScreen   // 导入订单详情页
 import com.example.myapplication.ui.theme.MyApplicationTheme
 import com.iflytek.cloud.SpeechConstant
 import com.iflytek.cloud.SpeechUtility
 
+// 高德地图初始化类（用于隐私合规设置）
+import com.amap.api.maps.MapsInitializer
+
+// ✅ 添加 Hilt 注解
+import dagger.hilt.android.AndroidEntryPoint
+
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // 高德地图隐私合规设置（必须在任何地图操作前调用）
+        MapsInitializer.updatePrivacyShow(this, true, true)
+        MapsInitializer.updatePrivacyAgree(this, true)
+
+        // 讯飞语音初始化
         SpeechUtility.createUtility(this, SpeechConstant.APPID + "=af1a4954")
 
         enableEdgeToEdge()
@@ -51,6 +65,9 @@ class MainActivity : ComponentActivity() {
                         MyApplicationApp(
                             onNavigateToOrderDetail = { orderId ->
                                 navController.navigate("order_detail/$orderId")
+                            },
+                            onNavigateToOrderList = {
+                                navController.navigate("orderList")
                             }
                         )
                     }
@@ -62,6 +79,13 @@ class MainActivity : ComponentActivity() {
                             Text("无效的订单ID")
                         }
                     }
+                    composable("orderList") {
+                        OrderListScreen(
+                            onOrderClick = { orderId ->
+                                navController.navigate("order_detail/$orderId")
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -72,7 +96,8 @@ class MainActivity : ComponentActivity() {
 @PreviewScreenSizes
 @Composable
 fun MyApplicationApp(
-    onNavigateToOrderDetail: (Long) -> Unit = {}
+    onNavigateToOrderDetail: (Long) -> Unit = {},
+    onNavigateToOrderList: () -> Unit = {}
 ) {
     var currentDestination by rememberSaveable { mutableStateOf(AppDestinations.HOME) }
 
@@ -98,7 +123,9 @@ fun MyApplicationApp(
                 onNavigateToOrder = onNavigateToOrderDetail
             )
             AppDestinations.FAVORITES -> Greeting("Favorites")
-            AppDestinations.PROFILE -> ProfileScreen()
+            AppDestinations.PROFILE -> ProfileScreen(
+                onNavigateToOrderList = onNavigateToOrderList
+            )
         }
     }
 }

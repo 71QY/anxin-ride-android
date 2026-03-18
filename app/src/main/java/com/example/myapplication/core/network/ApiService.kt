@@ -5,6 +5,7 @@ import com.example.myapplication.data.model.EmergencyContact
 import com.example.myapplication.data.model.LoginRequest
 import com.example.myapplication.data.model.LoginResponse
 import com.example.myapplication.data.model.Order
+import com.example.myapplication.data.model.PageResponse  // 新增导入
 import com.example.myapplication.data.model.Result
 import com.example.myapplication.data.model.UserProfile
 import retrofit2.http.*
@@ -21,13 +22,18 @@ interface ApiService {
     @POST("order/create")
     suspend fun createOrder(@Body request: CreateOrderRequest): Result<Order>
 
-    // 🔧 新增：查询订单详情
     @GET("order/{id}")
     suspend fun getOrder(@Path("id") orderId: Long): Result<Order>
 
-    // 🔧 新增：取消订单
     @POST("order/{id}/cancel")
     suspend fun cancelOrder(@Path("id") orderId: Long): Result<Unit>
+
+    // ✅ 新增：获取订单列表（支持分页）
+    @GET("order/list")
+    suspend fun getOrderList(
+        @Query("page") page: Int,
+        @Query("size") size: Int = 10
+    ): Result<PageResponse<Order>>
 
     // ========== 个人中心接口 ==========
     @GET("user/profile")

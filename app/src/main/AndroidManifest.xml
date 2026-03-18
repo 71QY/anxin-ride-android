@@ -20,7 +20,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.MyApplication">
 
-        <!-- 高德地图 Key -->
+        <!-- 高德地图 Key（请替换为你在高德开放平台申请的 Android Key） -->
         <meta-data
             android:name="com.amap.api.v2.apikey"
             android:value="你的高德Android Key" />
