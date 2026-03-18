@@ -4,6 +4,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat  // 使用 AutoMirrored 版本
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.navigationsuite.ExperimentalMaterial3AdaptiveNavigationSuiteApi
@@ -20,6 +22,7 @@ import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.example.myapplication.presentation.chat.ChatScreen
 import com.example.myapplication.presentation.home.HomeScreen
 import com.example.myapplication.presentation.login.LoginScreen
 import com.example.myapplication.presentation.order.OrderDetailScreen
@@ -28,11 +31,7 @@ import com.example.myapplication.presentation.profile.ProfileScreen
 import com.example.myapplication.ui.theme.MyApplicationTheme
 import com.iflytek.cloud.SpeechConstant
 import com.iflytek.cloud.SpeechUtility
-
-// 高德地图初始化类（用于隐私合规设置）
 import com.amap.api.maps.MapsInitializer
-
-// ✅ 添加 Hilt 注解
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
@@ -40,11 +39,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 高德地图隐私合规设置（必须在任何地图操作前调用）
         MapsInitializer.updatePrivacyShow(this, true, true)
         MapsInitializer.updatePrivacyAgree(this, true)
-
-        // 讯飞语音初始化
         SpeechUtility.createUtility(this, SpeechConstant.APPID + "=af1a4954")
 
         enableEdgeToEdge()
@@ -68,6 +64,9 @@ class MainActivity : ComponentActivity() {
                             },
                             onNavigateToOrderList = {
                                 navController.navigate("orderList")
+                            },
+                            onNavigateToChat = {
+                                navController.navigate("chat")
                             }
                         )
                     }
@@ -86,6 +85,14 @@ class MainActivity : ComponentActivity() {
                             }
                         )
                     }
+                    // ✅ 修正后的聊天目的地
+                    composable("chat") {
+                        ChatScreen(
+                            onNavigateToOrder = { orderId: Long ->  // 显式指定类型
+                                navController.navigate("order_detail/$orderId")
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -97,7 +104,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MyApplicationApp(
     onNavigateToOrderDetail: (Long) -> Unit = {},
-    onNavigateToOrderList: () -> Unit = {}
+    onNavigateToOrderList: () -> Unit = {},
+    onNavigateToChat: () -> Unit = {}
 ) {
     var currentDestination by rememberSaveable { mutableStateOf(AppDestinations.HOME) }
 
@@ -116,6 +124,13 @@ fun MyApplicationApp(
                     onClick = { currentDestination = destination }
                 )
             }
+            // 使用自动镜像图标
+            item(
+                icon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = "智能体") },
+                label = { Text("智能体") },
+                selected = false,
+                onClick = onNavigateToChat
+            )
         }
     ) {
         when (currentDestination) {
@@ -141,10 +156,7 @@ enum class AppDestinations(
 
 @Composable
 fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
+    Text(text = "Hello $name!", modifier = modifier)
 }
 
 @Preview(showBackground = true)

@@ -75,7 +75,7 @@ dependencies {
     implementation("com.squareup.retrofit2:retrofit:2.9.0")
     implementation("com.squareup.retrofit2:converter-gson:2.9.0")
     // OkHttp 核心库和日志拦截器（用于调试）
-    implementation("com.squareup.okhttp3:okhttp:4.11.0")          // ✅ 新增：OkHttp 核心库
+    implementation("com.squareup.okhttp3:okhttp:4.11.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.10.0")
 
     // ==================== 权限处理 ====================
@@ -99,6 +99,11 @@ dependencies {
 
     // ==================== 本地 JAR 包（讯飞、高德等） ====================
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
+
+    // ==================== WebSocket STOMP 客户端 ====================
+    // implementation("com.github.NaikSoftware:StompProtocolAndroid:1.6.6")
+    // implementation("io.reactivex.rxjava2:rxjava:2.2.21")
+    // implementation("io.reactivex.rxjava2:rxandroid:2.1.1")
 
     // ==================== 单元测试 ====================
     testImplementation("junit:junit:4.13.2")
