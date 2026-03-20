@@ -1,24 +1,23 @@
 pluginManagement {
     repositories {
-        // 将 JitPack 放在最前（虽然插件通常不从 JitPack 下载，但保留无妨）
-        maven { url = uri("https://jitpack.io") }
-        maven { setUrl("https://mirrors.cloud.tencent.com/maven/") }
-        maven { setUrl("https://mirrors.cloud.tencent.com/google/") }
+        maven { url = uri("https://maven.aliyun.com/repository/public") }
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
         google()
         mavenCentral()
         gradlePluginPortal()
+        maven { url = uri("https://jitpack.io") }
     }
 }
 dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
     repositories {
-        // JitPack 放在首位，确保优先从 JitPack 下载
-        maven { url = uri("https://jitpack.io") }
-        maven { setUrl("https://mirrors.cloud.tencent.com/maven/") }
-        maven { setUrl("https://mirrors.cloud.tencent.com/google/") }
         google()
         mavenCentral()
+        maven { url = uri("https://maven.aliyun.com/repository/public") }
+        maven { url = uri("https://jitpack.io") }
+        // flatDir 已移除，不再需要
     }
 }
 rootProject.name = "MyApplication"
+// 只保留 app 模块，其他 SDK 直接集成到 app 中
 include(":app")
