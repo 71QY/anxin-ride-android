@@ -1,157 +1,384 @@
 package com.example.myapplication
 
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.Alignment
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Chat  // 使用 AutoMirrored 版本
+import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.adaptive.navigationsuite.ExperimentalMaterial3AdaptiveNavigationSuiteApi
-import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.tooling.preview.PreviewScreenSizes
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.lifecycleScope
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.amap.api.maps.MapsInitializer
 import com.example.myapplication.presentation.chat.ChatScreen
+import com.example.myapplication.presentation.chat.ChatViewModel
+import com.example.myapplication.presentation.chat.ChatMode  // ⭐ 新增：导入聊天模式枚举
 import com.example.myapplication.presentation.home.HomeScreen
+import com.example.myapplication.presentation.home.HomeViewModel
 import com.example.myapplication.presentation.login.LoginScreen
 import com.example.myapplication.presentation.order.OrderDetailScreen
 import com.example.myapplication.presentation.order.OrderListScreen
 import com.example.myapplication.presentation.profile.ProfileScreen
+import com.example.myapplication.service.AgentFloatService
 import com.example.myapplication.ui.theme.MyApplicationTheme
+import com.example.myapplication.debug.WebSocketDebugMonitor
 import com.iflytek.cloud.SpeechConstant
 import com.iflytek.cloud.SpeechUtility
-import com.amap.api.maps.MapsInitializer
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import com.example.myapplication.R
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    private val TAG = "MainActivity"
+    
+    private var hasRequestedPermission = false
+    
+    // ⭐ 修改：使用 Activity 的 viewModels() 委托，Hilt 会自动提供 ViewModelFactory
+    private val homeViewModel: HomeViewModel by viewModels()
+    private val chatViewModel: ChatViewModel by viewModels()
+    
+    // ⭐ 新增：用于监听导航到聊天界面的请求
+    private var _navigateToChat by mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        MapsInitializer.updatePrivacyShow(this, true, true)
-        MapsInitializer.updatePrivacyAgree(this, true)
-        SpeechUtility.createUtility(this, SpeechConstant.APPID + "=af1a4954")
+        // ⭐ 修改：同时检查 onCreate 和 intent
+        val navigateToChat = intent.getBooleanExtra("navigate_to_chat", false)
+        _navigateToChat = navigateToChat
 
-        enableEdgeToEdge()
-        setContent {
-            MyApplicationTheme {
-                val navController = rememberNavController()
-                NavHost(navController = navController, startDestination = "login") {
-                    composable("login") {
-                        LoginScreen(
-                            onLoginSuccess = {
-                                navController.navigate("main") {
-                                    popUpTo("login") { inclusive = true }
-                                }
+        try {
+            // ⭐ 优化：简化初始化流程
+            MapsInitializer.updatePrivacyShow(this, true, true)
+            MapsInitializer.updatePrivacyAgree(this, true)
+
+            // ⭐ 修改：添加异常处理，避免讯飞 SDK 初始化失败导致崩溃
+            try {
+                val iflytekAppid = BuildConfig.IFLYTEK_APPID
+                if (iflytekAppid.isNotBlank()) {
+                    SpeechUtility.createUtility(this, SpeechConstant.APPID + "=" + iflytekAppid)
+                }
+            } catch (e: Exception) {
+                // 不抛出异常，继续执行
+            }
+
+            enableEdgeToEdge()
+
+            setContent {
+                MyApplicationTheme {
+                    val navController = rememberNavController()
+
+                    // ⭐ 优化：合并位置监听逻辑，只使用一个 LaunchedEffect
+                    LaunchedEffect(Unit) {
+                        // 合并监听：位置 Flow
+                        homeViewModel.currentLocation.collect { location ->
+                            location?.let {
+                                chatViewModel.syncLocationFromHome(it.latitude, it.longitude)
                             }
-                        )
-                    }
-                    composable("main") {
-                        MyApplicationApp(
-                            onNavigateToOrderDetail = { orderId ->
-                                navController.navigate("order_detail/$orderId")
-                            },
-                            onNavigateToOrderList = {
-                                navController.navigate("orderList")
-                            },
-                            onNavigateToChat = {
-                                navController.navigate("chat")
-                            }
-                        )
-                    }
-                    composable("order_detail/{orderId}") { backStackEntry ->
-                        val orderId = backStackEntry.arguments?.getString("orderId")?.toLongOrNull()
-                        if (orderId != null) {
-                            OrderDetailScreen(orderId = orderId)
-                        } else {
-                            Text("无效的订单ID")
                         }
                     }
-                    composable("orderList") {
-                        OrderListScreen(
-                            onOrderClick = { orderId ->
-                                navController.navigate("order_detail/$orderId")
+
+                    NavHost(navController = navController, startDestination = "login") {
+                        composable("login") {
+                            LoginScreen(
+                                onLoginSuccess = {
+                                    navController.navigate("main") {
+                                        popUpTo("login") { inclusive = true }
+                                    }
+                                },
+                                onRequestFloatPermission = {
+                                    // ⭐ 修改：暂时禁用悬浮窗权限请求
+                                }
+                            )
+                        }
+                        composable("main") {
+                            MyApplicationApp(
+                                homeViewModel = homeViewModel,
+                                chatViewModel = chatViewModel,
+                                onNavigateToOrderDetail = { orderId ->
+                                    navController.navigate("order_detail/$orderId")
+                                },
+                                onNavigateToOrderList = {
+                                    // ⭐ 修改：使用 popUpTo 避免重复添加订单列表界面
+                                    navController.navigate("orderList") {
+                                        popUpTo("main") {
+                                            inclusive = false
+                                        }
+                                    }
+                                },
+                                onNavigateToChat = {
+                                    // ⭐ 修改：使用 popUpTo 避免重复添加聊天界面
+                                    navController.navigate("chat") {
+                                        popUpTo("main") {
+                                            inclusive = false
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                        composable("order_detail/{orderId}") { backStackEntry ->
+                            val orderId = backStackEntry.arguments?.getString("orderId")?.toLongOrNull()
+                            if (orderId != null) {
+                                OrderDetailScreen(orderId = orderId)
+                            } else {
+                                Text("无效的订单 ID")
                             }
-                        )
-                    }
-                    // ✅ 修正后的聊天目的地
-                    composable("chat") {
-                        ChatScreen(
-                            onNavigateToOrder = { orderId: Long ->  // 显式指定类型
-                                navController.navigate("order_detail/$orderId")
-                            }
-                        )
+                        }
+                        composable("orderList") {
+                            OrderListScreen(
+                                onOrderClick = { orderId ->
+                                    navController.navigate("order_detail/$orderId")
+                                }
+                            )
+                        }
+                        composable("chat") {
+                            ChatScreen(
+                                viewModel = chatViewModel,
+                                onNavigateToOrder = { orderId: Long ->
+                                    navController.navigate("order_detail/$orderId")
+                                },
+                                chatMode = ChatMode.AGENT  // ⭐ 新增：默认智能体模式
+                            )
+                        }
                     }
                 }
             }
+
+            Log.d(TAG, "=== MainActivity onCreate 完成 ===")
+        } catch (e: Exception) {
+            Log.e(TAG, "onCreate 过程中发生异常", e)
+            throw e
         }
+    }
+
+    // ⭐ 新增：处理 Activity 重启时的 Intent
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        val navigateToChat = intent.getBooleanExtra("navigate_to_chat", false)
+        if (navigateToChat) {
+            Log.d(TAG, "onNewIntent: 从悬浮窗进入聊天界面")
+            _navigateToChat = true
+            // ⭐ 重要：不设置任何 flags，让用户自然留在当前导航栈中
+            // Compose 会通过 StateFlow 自动检测到变化并导航到聊天界面
+        }
+    }
+
+    // ⭐ 新增：在登录成功后请求悬浮窗权限
+    fun requestFloatPermissionAfterLogin() {
+        lifecycleScope.launch {
+            delay(500) // 稍微延迟，等待登录动画完成
+            // ⭐ 修改：暂时禁用悬浮窗权限请求
+            // requestFloatPermission()
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.d(TAG, "=== MainActivity onDestroy ===")
+        
+        // ⭐ 修改：确保停止悬浮窗服务
+        try {
+            val intent = Intent(this, AgentFloatService::class.java)
+            stopService(intent)
+            Log.d(TAG, "悬浮窗服务已停止")
+        } catch (e: Exception) {
+            Log.e(TAG, "停止悬浮窗服务失败", e)
+        }
+        
+        // ⭐ 重要：不要在 onDestroy 中断开 WebSocket!
+        // WebSocket 应该保持连接，除非用户主动退出登录
+        Log.d(TAG, "保持 WebSocket 连接，不断开")
+        Log.d(TAG, "注意：切换页面不会断开 WebSocket")
     }
 }
 
-@OptIn(ExperimentalMaterial3AdaptiveNavigationSuiteApi::class)
-@PreviewScreenSizes
+// ⭐ 修改：接收外部传入的 ViewModel
 @Composable
 fun MyApplicationApp(
+    homeViewModel: HomeViewModel,  // ⭐ 新增参数
+    chatViewModel: ChatViewModel,  // ⭐ 新增参数
     onNavigateToOrderDetail: (Long) -> Unit = {},
     onNavigateToOrderList: () -> Unit = {},
     onNavigateToChat: () -> Unit = {}
 ) {
-    var currentDestination by rememberSaveable { mutableStateOf(AppDestinations.HOME) }
+    var currentDestination by rememberSaveable { mutableStateOf<String?>("home") }
 
-    NavigationSuiteScaffold(
-        navigationSuiteItems = {
-            AppDestinations.entries.forEach { destination ->
-                item(
+    Scaffold(
+        bottomBar = {
+            NavigationBar {
+                // ⭐ 修改：按指定顺序排列导航项，统一图标大小
+                NavigationBarItem(
+                    selected = currentDestination == "home",
+                    onClick = {
+                        currentDestination = "home"
+                    },
                     icon = {
                         Icon(
-                            painterResource(destination.icon),
-                            contentDescription = destination.label
+                            painter = painterResource(id = R.drawable.ic_home),
+                            contentDescription = "首页",
+                            modifier = Modifier.size(24.dp)  // ⭐ 统一图标大小
                         )
                     },
-                    label = { Text(destination.label) },
-                    selected = destination == currentDestination,
-                    onClick = { currentDestination = destination }
+                    label = { Text("首页") }
+                )
+                NavigationBarItem(
+                    selected = currentDestination == "favorites",
+                    onClick = {
+                        currentDestination = "favorites"
+                    },
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Default.FavoriteBorder,
+                            contentDescription = "收藏",
+                            modifier = Modifier.size(24.dp)  // ⭐ 统一图标大小
+                        )
+                    },
+                    label = { Text("收藏") }
+                )
+                NavigationBarItem(
+                    selected = currentDestination == "chat",
+                    onClick = {
+                        currentDestination = "chat"
+                    },
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Default.Chat,
+                            contentDescription = "聊天",
+                            modifier = Modifier.size(24.dp)  // ⭐ 统一图标大小
+                        )
+                    },
+                    label = { Text("聊天") }
+                )
+                NavigationBarItem(
+                    selected = currentDestination == "profile",
+                    onClick = {
+                        currentDestination = "profile"
+                    },
+                    icon = {
+                        Icon(
+                            painterResource(id = R.drawable.ic_account_box),
+                            contentDescription = "个人",
+                            modifier = Modifier.size(24.dp)  // ⭐ 统一图标大小
+                        )
+                    },
+                    label = { Text("个人") }
                 )
             }
-            // 使用自动镜像图标
-            item(
-                icon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = "智能体") },
-                label = { Text("智能体") },
-                selected = false,
-                onClick = onNavigateToChat
-            )
         }
-    ) {
-        when (currentDestination) {
-            AppDestinations.HOME -> HomeScreen(
-                onNavigateToOrder = onNavigateToOrderDetail
-            )
-            AppDestinations.FAVORITES -> Greeting("Favorites")
-            AppDestinations.PROFILE -> ProfileScreen(
-                onNavigateToOrderList = onNavigateToOrderList
-            )
+    ) { paddingValues ->
+        Column(modifier = Modifier.padding(paddingValues)) {
+            when (currentDestination) {
+                "home" -> {
+                    HomeScreen(
+                        viewModel = homeViewModel,
+                        onNavigateToProfile = { currentDestination = "profile" },
+                        onStartFloatService = { 
+                            // ⭐ 修改：禁用悬浮窗启动
+                        },
+                        onRequestLocationPermission = { },
+                        onNavigateToOrder = { orderId -> onNavigateToOrderDetail(orderId.toLongOrNull() ?: 0L) },
+                        onNavigateToChat = onNavigateToChat
+                    )
+                }
+                "favorites" -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FavoriteBorder,
+                            contentDescription = null,
+                            modifier = Modifier.size(64.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "暂无收藏",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "点击地图标记喜欢的地点",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                "chat" -> {
+                    ChatScreen(
+                        viewModel = chatViewModel,
+                        onNavigateToOrder = onNavigateToOrderDetail,
+                        chatMode = ChatMode.AGENT  // ⭐ 新增：默认智能体模式
+                    )
+                }
+                "profile" -> {
+                    ProfileScreen(
+                        onNavigateToOrderList = onNavigateToOrderList
+                    )
+                }
+                else -> {
+                    HomeScreen(
+                        viewModel = homeViewModel,
+                        onNavigateToProfile = { currentDestination = "profile" },
+                        onStartFloatService = { },
+                        onRequestLocationPermission = { },
+                        onNavigateToOrder = { orderId -> onNavigateToOrderDetail(orderId.toLongOrNull() ?: 0L) },
+                        onNavigateToChat = onNavigateToChat
+                    )
+                }
+            }
         }
     }
-}
-
-enum class AppDestinations(
-    val label: String,
-    val icon: Int,
-) {
-    HOME("首页", R.drawable.ic_home),
-    FAVORITES("收藏", R.drawable.ic_favorite),
-    PROFILE("个人", R.drawable.ic_account_box),
 }
 
 @Composable

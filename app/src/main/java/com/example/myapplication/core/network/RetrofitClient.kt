@@ -1,5 +1,7 @@
 package com.example.myapplication.core.network
 
+import android.util.Log
+import com.example.myapplication.BuildConfig
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -7,18 +9,25 @@ import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
 
 object RetrofitClient {
-    // 后端地址，请确保 IP 和端口正确
-    private const val BASE_URL = "http://10.120.253.80:8080/api/"
+    private const val BASE_URL = BuildConfig.API_BASE_URL
+
+    init {
+        Log.d("RetrofitClient", "API Base URL: $BASE_URL")
+    }
 
     private val client = OkHttpClient.Builder()
-        .addInterceptor(HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BODY })
-        .addInterceptor(AuthInterceptor())   // 添加认证拦截器
+        .addInterceptor(HttpLoggingInterceptor().apply { 
+            level = HttpLoggingInterceptor.Level.BODY 
+        })
+        .addInterceptor(AuthInterceptor())
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)  // ⭐ 启用连接失败重试
         .build()
 
     val instance: ApiService by lazy {
+        Log.d("RetrofitClient", "Creating ApiService instance")
         Retrofit.Builder()
             .baseUrl(BASE_URL)
             .client(client)

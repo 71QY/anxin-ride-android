@@ -6,12 +6,24 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
+
+// ⭐ 状态码转文字函数
+fun getStatusText(status: Int): String {
+    return when (status) {
+        0 -> "待接单"
+        1 -> "已接单"
+        2 -> "进行中"
+        3 -> "已完成"
+        4 -> "已取消"
+        else -> "未知状态 ($status)"
+    }
+}
 
 @Composable
 fun OrderDetailScreen(
     orderId: Long,
-    viewModel: OrderDetailViewModel = viewModel()
+    viewModel: OrderDetailViewModel = hiltViewModel()
 ) {
     val order by viewModel.order.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
@@ -43,11 +55,11 @@ fun OrderDetailScreen(
                 Text("订单详情", style = MaterialTheme.typography.headlineMedium)
                 Spacer(modifier = Modifier.height(16.dp))
                 Text("订单号：${order!!.orderNo}")
-                Text("目的地：${order!!.destAddress}")
-                Text("预估价格：${order!!.estimatePrice}元")
-                Text("状态：${order!!.status}") // 可根据状态映射为文字
+                Text("目的地：${order!!.getAddress() ?: order!!.poiAddress}")  // ⭐ 使用兼容方法
+                Text("预估价格：${order!!.estimatedPrice}元")
+                Text("状态：${getStatusText(order!!.status)}") // ⭐ 根据状态码显示文字
                 Spacer(modifier = Modifier.height(16.dp))
-                if (order!!.status == 0) { // 待接单
+                if (order!!.status == 0) { // ⭐ 修改：使用 Int 类型，0=pending
                     Button(
                         onClick = { viewModel.cancelOrder(orderId) },
                         modifier = Modifier.fillMaxWidth()

@@ -1,9 +1,11 @@
 plugins {
-    id("com.android.application") version "8.1.0"
-    id("org.jetbrains.kotlin.android") version "1.9.0"
-    id("org.jetbrains.kotlin.kapt") version "1.9.0"
-    id("com.google.dagger.hilt.android") version "2.48"
-    id("org.jetbrains.kotlin.plugin.serialization") version "1.9.0"
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.kapt")
+    id("org.jetbrains.kotlin.plugin.serialization")
+    id("org.jetbrains.kotlin.plugin.parcelize")
+    // ⭐ 新增：Hilt 插件（必须！）
+    id("com.google.dagger.hilt.android")
 }
 
 android {
@@ -12,11 +14,25 @@ android {
 
     defaultConfig {
         applicationId = "com.example.myapplication"
-        minSdk = 24
+        minSdk = 26
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        
+        val apiBaseUrl = project.findProperty("api.baseUrl")?.toString() ?: "http://10.237.36.80:8080/api/"
+        val websocketUrl = project.findProperty("websocket.url")?.toString() ?: "ws://10.237.36.80:8080/ws/agent"
+        val amapKey = project.findProperty("amap.key")?.toString() ?: ""
+        val iflytekAppid = project.findProperty("iflytek.appid")?.toString() ?: ""
+        
+        buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
+        buildConfigField("String", "WEBSOCKET_URL", "\"$websocketUrl\"")
+        buildConfigField("String", "AMAP_KEY", "\"$amapKey\"")
+        buildConfigField("String", "IFLYTEK_APPID", "\"$iflytekAppid\"")
+        
+        manifestPlaceholders["AMAP_KEY"] = amapKey
+        
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
         }
@@ -24,83 +40,102 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
         }
     }
-
+    
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
-
-    kotlinOptions {
-        jvmTarget = "11"
+    
+    kotlin {
+        jvmToolchain(17)
     }
-
+    
     buildFeatures {
         compose = true
+        buildConfig = true
+        // ⭐ 优化：禁用不需要的 Build Features，减少编译时间
+        aidl = false
+        renderScript = false
+        resValues = false
+        shaders = false
     }
-
+    
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.2"
+        kotlinCompilerExtensionVersion = "1.5.8"  // ⭐ 与 Kotlin 1.9.22 兼容
+    }
+    
+    packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 }
 
 dependencies {
-    implementation(platform("androidx.compose:compose-bom:2023.03.00"))
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-graphics")
-    implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
-
-    implementation("androidx.activity:activity-compose:1.8.2")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
-    implementation("androidx.core:core-ktx:1.12.0")
-
-    implementation("com.squareup.retrofit2:retrofit:2.9.0")
-    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
-    implementation("com.squareup.okhttp3:okhttp:4.11.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:4.10.0")
-
-    implementation("com.google.accompanist:accompanist-permissions:0.30.1")
-
-    implementation("androidx.navigation:navigation-compose:2.5.3")
-    implementation("androidx.compose.material3:material3-adaptive-navigation-suite:1.0.0-alpha05")
-
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
-
-    implementation("com.google.dagger:hilt-android:2.48")
-    kapt("com.google.dagger:hilt-compiler:2.48")
-    implementation("androidx.hilt:hilt-navigation-compose:1.1.0")
-
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.6.2")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.2")
-
-    // ✅ 本地依赖：同时引入 libs 下的 .aar 和 .jar 文件（高德 AAR + 讯飞 JAR）
-    implementation(fileTree("libs") { include("*.aar", "*.jar") })
-
-    // ⚠️ 以下两行必须移除，因为我们已经删除了这两个模块
-    // implementation(project(":amap-sdk"))
-    // implementation(project(":iflytek-sdk"))
-
-    // 所有远程高德依赖已注释，保持注释状态
-    // implementation("com.amap.api:map3d:9.8.8")
-    // implementation("com.amap.api:location:6.2.0")
-
-    testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.1.5")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
-    androidTestImplementation(platform("androidx.compose:compose-bom:2023.03.00"))
-    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
-    debugImplementation("androidx.compose.ui:ui-tooling")
-    debugImplementation("androidx.compose.ui:ui-test-manifest")
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.activity.compose)
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.graphics)
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.androidx.compose.material3)
+    // ⭐ 优化：使用 BOM 管理版本，避免硬编码
+    implementation(libs.androidx.compose.material.icons.extended)
+    
+    // ⭐ Lifecycle 和 ViewModel（用于 collectAsStateWithLifecycle）
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    
+    implementation(libs.androidx.navigation.compose)
+    implementation(libs.hilt.android)
+    implementation(libs.androidx.hilt.navigation.compose)
+    implementation(libs.androidx.compose.runtime.livedata)
+    
+    // ⭐ Coil 图片加载库
+    implementation(libs.coil.compose)
+    
+    implementation(libs.accompanist.permissions)
+    implementation(files("libs\\Msc.jar"))
+    implementation(files("libs\\amap-full-11.1.0.aar"))
+    implementation(libs.retrofit)
+    implementation(libs.retrofit.converter.gson)
+    implementation(libs.okhttp.logging.interceptor)
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.datastore.preferences)
+    implementation(libs.gson)
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+    testImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.tooling)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
+    
+    // ⭐ Hilt 编译器依赖
+    kapt(libs.hilt.android.compiler)
 }
 
+// ⭐ kapt 配置 - 添加 Hilt 优化
 kapt {
     correctErrorTypes = true
+    useBuildCache = true  // ⭐ 启用构建缓存
+    
+    javacOptions {
+        option("-Adagger.fastInit=enabled")
+        option("-Adagger.hilt.android.internal.disableAndroidSuperclassValidation=true")
+        option("-Xmaxerrs", "500")
+    }
 }

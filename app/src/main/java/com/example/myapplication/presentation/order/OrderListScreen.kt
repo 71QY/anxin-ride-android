@@ -25,7 +25,7 @@ fun OrderListScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(8.dp),
+            contentPadding = PaddingValues(8.dp),  // ✅ 使用内边距而不是外部 padding
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(orders) { order ->
@@ -84,23 +84,9 @@ fun OrderCard(
                 text = "订单号：${order.orderNo}",
                 style = MaterialTheme.typography.titleMedium
             )
-            Text("目的地：${order.destAddress}")
-            Text("状态：${order.status.toDisplayString()}")
-            Text("预估价格：${order.estimatePrice}元")
+            Text("目的地：${order.poiAddress}")
+            Text("状态：${order.status}")
+            Text("预估价格：${order.estimatedPrice}元")
         }
-    }
-}
-
-/**
- * 订单状态转换扩展函数
- */
-fun Int.toDisplayString(): String {
-    return when (this) {
-        0 -> "待接单"
-        1 -> "已接单"
-        2 -> "行程中"
-        3 -> "已完成"
-        4 -> "已取消"
-        else -> "未知"
     }
 }

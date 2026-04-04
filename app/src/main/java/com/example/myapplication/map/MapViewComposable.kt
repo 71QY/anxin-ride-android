@@ -1,6 +1,7 @@
 package com.example.myapplication.map
 
 import android.os.Bundle
+import android.util.Log
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -23,29 +24,53 @@ fun MapViewComposable(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val mapView = remember { MapView(context) }
+    var aMap by remember { mutableStateOf<AMap?>(null) }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_CREATE -> mapView.onCreate(Bundle())
-                Lifecycle.Event.ON_RESUME -> mapView.onResume()
-                Lifecycle.Event.ON_PAUSE -> mapView.onPause()
-                Lifecycle.Event.ON_DESTROY -> mapView.onDestroy()
+                Lifecycle.Event.ON_CREATE -> {
+                    mapView.onCreate(Bundle())
+                    Log.d("MapViewComposable", "MapView onCreate")
+                }
+                // ⭐ 修改：移除 onStart 和 onStop，MapView 不需要这些方法
+                Lifecycle.Event.ON_RESUME -> {
+                    mapView.onResume()
+                    Log.d("MapViewComposable", "MapView onResume")
+                }
+                Lifecycle.Event.ON_PAUSE -> {
+                    mapView.onPause()
+                    Log.d("MapViewComposable", "MapView onPause")
+                }
+                Lifecycle.Event.ON_DESTROY -> {
+                    mapView.onDestroy()
+                    Log.d("MapViewComposable", "MapView onDestroy")
+                }
                 else -> {}
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        
+        onDispose { 
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            mapView.onDestroy()
+            Log.d("MapViewComposable", "DisposableEffect disposed")
+        }
     }
 
     AndroidView(
         factory = { mapView },
         modifier = modifier,
         update = { view ->
-            val aMap = view.map
-            onMapReady(aMap)
-            aMap.setOnMapClickListener { onMapClick(it) }
-            aMap.setOnPOIClickListener { poi -> onPoiClick(poi) }
+            if (aMap == null) {
+                aMap = view.map
+                aMap?.let { map ->
+                    onMapReady(map)
+                    map.setOnMapClickListener { onMapClick(it) }
+                    map.setOnPOIClickListener { poi -> onPoiClick(poi) }
+                    Log.d("MapViewComposable", "地图加载完成")
+                }
+            }
         }
     )
 }

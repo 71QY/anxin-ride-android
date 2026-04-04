@@ -55,13 +55,13 @@ class OrderListViewModel @Inject constructor(
                 if (pageData != null) {
                     if (loadMore) {
                         // 加载更多：追加到列表末尾
-                        _orders.value = _orders.value + pageData.records
+                        _orders.value = _orders.value + pageData.list
                     } else {
                         // 首次加载或刷新：替换列表
-                        _orders.value = pageData.records
+                        _orders.value = pageData.list
                     }
-                    currentPage = pageData.current
-                    hasMore = pageData.current < pageData.pages
+                    currentPage = pageData.page
+                    hasMore = currentPage * pageData.size < pageData.total
                 }
             } else {
                 _errorMessage.value = result.message
