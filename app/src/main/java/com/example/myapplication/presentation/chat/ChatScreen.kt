@@ -17,6 +17,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight  // ⭐ 新增：用于字体粗细
+import androidx.compose.ui.platform.LocalConfiguration  // ⭐ 新增：用于机型自适应
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -25,6 +27,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.myapplication.data.model.ChatMessage
 import com.example.myapplication.data.model.PoiData  // ⭐ 新增：导入 PoiData
 import com.google.accompanist.permissions.*
+import kotlinx.coroutines.delay
 
 // ⭐ 聊天模式枚举
 enum class ChatMode {
@@ -78,6 +81,8 @@ fun ChatScreen(
     val candidates by viewModel.candidates.collectAsStateWithLifecycle()  // ⭐ 新增：监听候选列表
     val showCandidatesDialog by viewModel.showCandidatesDialog.collectAsStateWithLifecycle()  // ⭐ 新增
     val orderState by viewModel.orderState.collectAsStateWithLifecycle()
+    val isListening by viewModel.isListening.collectAsStateWithLifecycle()  // ⭐ 新增：监听语音输入状态
+    val voiceInputText by viewModel.voiceInputText.collectAsStateWithLifecycle()  // ⭐ 新增：监听实时语音文本
     var inputText by remember { mutableStateOf("") }
     
     // ⭐ 新增：用于自动滚动到最新消息
@@ -92,6 +97,9 @@ fun ChatScreen(
     } else {
         rememberPermissionState(Manifest.permission.READ_EXTERNAL_STORAGE)
     }
+    
+    // ⭐ 新增：订单详情对话框状态（必须在 LaunchedEffect 之前声明）
+    var showOrderDetailDialog by remember { mutableStateOf(false) }
     
     // ⭐ 根据模式显示不同的标题
     val title = when (chatMode) {
@@ -131,8 +139,9 @@ fun ChatScreen(
     LaunchedEffect(orderState) {
         if (orderState is ChatViewModel.OrderState.Success) {
             val order = (orderState as ChatViewModel.OrderState.Success).order
-            onNavigateToOrder(order.id)
-            viewModel.resetOrderState()
+            // ⭐ 弹出订单详情对话框而不是直接跳转
+            showOrderDetailDialog = true
+            // ⭐ 不在这里重置状态，等待用户操作后再重置
         }
     }
     
@@ -141,6 +150,13 @@ fun ChatScreen(
         if (messages.isNotEmpty()) {
             // ⭐ 修改：滚动到最后一条消息（索引为 messages.size - 1）
             lazyListState.animateScrollToItem(messages.size - 1)
+        }
+    }
+    
+    // ⭐ 新增：实时同步语音识别结果到输入框
+    LaunchedEffect(voiceInputText) {
+        if (voiceInputText.isNotBlank()) {
+            inputText = voiceInputText  // ⭐ 像微信一样实时更新输入框
         }
     }
 
@@ -227,31 +243,120 @@ fun ChatScreen(
             }
         )
     }
+    
+    // ⭐ 新增：订单详情对话框
+    if (showOrderDetailDialog) {
+        val order = (orderState as? ChatViewModel.OrderState.Success)?.order
+        if (order != null) {
+            AlertDialog(
+                onDismissRequest = { 
+                    showOrderDetailDialog = false
+                    viewModel.resetOrderState()  // ⭐ 用户关闭对话框时重置状态
+                },
+                title = { Text("✅ 订单创建成功") },
+                text = {
+                    Column {
+                        Text(
+                            text = "订单号：${order.orderNo}",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "目的地：${order.destAddress ?: order.poiName ?: "未知"}",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "预估价格：¥${order.estimatePrice ?: 0.0}",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "状态：${getStatusText(order.status)}",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        if (!order.remark.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "备注：${order.remark}",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showOrderDetailDialog = false
+                            viewModel.resetOrderState()  // ⭐ 跳转前重置状态
+                            onNavigateToOrder(order.id)
+                        }
+                    ) {
+                        Text("查看详情")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { 
+                            showOrderDetailDialog = false
+                            viewModel.resetOrderState()  // ⭐ 关闭时重置状态
+                        }
+                    ) {
+                        Text("关闭")
+                    }
+                }
+            )
+        } else {
+            // ⭐ order 为 null 时重置状态并关闭对话框
+            showOrderDetailDialog = false
+            viewModel.resetOrderState()
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxSize()
     ) {
-        // ⭐ 顶部栏
-        TopAppBar(
-            title = { 
-                Column {
-                    Text(text = title, fontSize = 18.sp)
+        // ⭐ 顶部栏 - 使用更紧凑的布局
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding(),  // 适配状态栏
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp),  // 更紧凑的内边距
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // 返回按钮
+                IconButton(
+                    onClick = { onNavigateToOrder(-1L) },
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                }
+                
+                // 标题区域
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = title, 
+                        fontSize = if (LocalConfiguration.current.screenWidthDp < 360) 16.sp else 18.sp,  // 机型自适应
+                        fontWeight = FontWeight.Bold
+                    )
                     if (chatMode == ChatMode.AGENT) {
                         Text(
                             text = "在线", 
-                            fontSize = 12.sp, 
+                            fontSize = if (LocalConfiguration.current.screenWidthDp < 360) 10.sp else 12.sp,  // 机型自适应
                             color = Color.Green
                         )
                     }
                 }
-            },
-            navigationIcon = {
-                IconButton(onClick = { /* 返回 */ }) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "返回")
-                }
-            },
-            actions = {
-                // ⭐ 模式切换按钮
+                
+                // 更多按钮
                 PopupMenuButton(
                     items = listOf("智能体助手", "好友聊天", "司机联系"),
                     onItemSelected = { index ->
@@ -269,7 +374,7 @@ fun ChatScreen(
                     )
                 }
             }
-        )
+        }
         
         // ⭐ 修改：正常顺序显示（最新消息在底部，类似微信）
         LazyColumn(
@@ -289,48 +394,98 @@ fun ChatScreen(
             }
         }
 
-        Row(
+        // ⭐ 优化：输入区域，添加语音输入动画
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(8.dp)
         ) {
-            OutlinedTextField(
-                value = inputText,
-                onValueChange = { inputText = it },
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("输入消息...") }
-            )
-
-            IconButton(
-                onClick = {
-                    if (inputText.isNotBlank()) {
-                        viewModel.sendMessage(inputText)
-                        inputText = ""
-                    }
-                },
-                enabled = inputText.isNotBlank()
+            // ⭐ 新增：语音输入状态提示
+            androidx.compose.animation.AnimatedVisibility(
+                visible = isListening,
+                enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.expandVertically(),
+                exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.shrinkVertically()
             ) {
-                Icon(Icons.Default.Send, contentDescription = "发送")
-            }
-
-            IconButton(
-                onClick = {
-                    if (audioPermissionState.status.isGranted) {
-                        viewModel.startVoiceInput(context)
-                    } else {
-                        Toast.makeText(context, "需要录音权限", Toast.LENGTH_SHORT).show()
-                        audioPermissionState.launchPermissionRequest()
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // ⭐ 录音动画指示器
+                        androidx.compose.foundation.Canvas(
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            val radius = size.minDimension / 2
+                            drawCircle(
+                                color = Color.Red.copy(alpha = 0.6f),
+                                radius = radius
+                            )
+                        }
+                        Text(
+                            text = "正在识别...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     }
                 }
-            ) {
-                Icon(Icons.Default.Mic, contentDescription = "语音")
             }
-
-            IconButton(
-                onClick = { showImagePickerDialog = true }
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Image, contentDescription = "图片")
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = { inputText = it },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("输入消息...") },
+                    // ⭐ 优化：单行显示，自动滚动
+                    singleLine = true,
+                    maxLines = 1
+                )
+
+                IconButton(
+                    onClick = {
+                        if (inputText.isNotBlank()) {
+                            viewModel.sendMessage(inputText)
+                            inputText = ""  // ⭐ 发送后清空
+                        }
+                    },
+                    enabled = inputText.isNotBlank()
+                ) {
+                    Icon(Icons.Default.Send, contentDescription = "发送")
+                }
+
+                IconButton(
+                    onClick = {
+                        if (audioPermissionState.status.isGranted) {
+                            viewModel.startVoiceInput(context)
+                        } else {
+                            Toast.makeText(context, "需要录音权限", Toast.LENGTH_SHORT).show()
+                            audioPermissionState.launchPermissionRequest()
+                        }
+                    }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Mic,
+                        contentDescription = "语音",
+                        tint = if (isListening) Color.Red else MaterialTheme.colorScheme.onSurface  // ⭐ 录音中显示红色
+                    )
+                }
+
+                IconButton(
+                    onClick = { showImagePickerDialog = true }
+                ) {
+                    Icon(Icons.Default.Image, contentDescription = "图片")
+                }
             }
         }
     }
@@ -442,4 +597,16 @@ fun ChatBubble(
 private fun formatTimestamp(timestamp: Long): String {
     val sdf = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
     return sdf.format(java.util.Date(timestamp))
+}
+
+// ⭐ 新增：状态码转文字函数
+fun getStatusText(status: Int): String {
+    return when (status) {
+        0 -> "待接单"
+        1 -> "已接单"
+        2 -> "进行中"
+        3 -> "已完成"
+        4 -> "已取消"
+        else -> "未知状态 ($status)"
+    }
 }

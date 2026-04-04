@@ -1,7 +1,6 @@
     package com.example.myapplication.presentation.home
     
     import android.content.Context
-    import android.location.Location
     import android.util.LruCache
     import android.util.Log
     import androidx.compose.runtime.getValue
@@ -33,9 +32,12 @@
     import com.example.myapplication.data.model.Order
     import com.example.myapplication.data.model.PoiDetail
     import com.example.myapplication.data.model.PoiResponse
+    import com.example.myapplication.data.repository.AgentRepository
     import com.example.myapplication.data.repository.OrderRepository
     import com.example.myapplication.domain.repository.IOrderRepository
-    import com.example.myapplication.core.utils.SpeechRecognizerHelper
+    import com.example.myapplication.core.utils.BaiduSpeechRecognizerHelper
+    import com.example.myapplication.MyApplication
+    import com.example.myapplication.core.datastore.TokenManager
     import dagger.hilt.android.lifecycle.HiltViewModel
     import dagger.hilt.android.qualifiers.ApplicationContext
     import kotlinx.coroutines.Job
@@ -59,6 +61,8 @@
         private val orderRepository: IOrderRepository,
         private val apiService: ApiService,
         private val webSocketClient: com.example.myapplication.core.websocket.ChatWebSocketClient,  // ⭐ 新增
+        private val agentRepository: AgentRepository,  // ⭐ 新增
+        private val tokenManager: TokenManager,  // ⭐ 新增
         @ApplicationContext private val appContext: Context
     ) : ViewModel() {
     
@@ -126,15 +130,20 @@
         private val _isListening = MutableStateFlow(false)
         val isListening: StateFlow<Boolean> = _isListening.asStateFlow()
     
+        // ⭐ 新增：实时语音识别文本
+        private val _voiceText = MutableStateFlow("")
+        val voiceText: StateFlow<String> = _voiceText.asStateFlow()
+        
+        // ⭐ 新增：用于实时显示正在说的话（逐字填入）
+        private val _realtimeVoiceText = MutableStateFlow("")
+        val realtimeVoiceText: StateFlow<String> = _realtimeVoiceText.asStateFlow()
+    
         private val _backendPoiResults = MutableStateFlow<List<PoiResponse>>(emptyList())
         val backendPoiResults: StateFlow<List<PoiResponse>> = _backendPoiResults.asStateFlow()
     
         private var searchJob: Job? = null
-        private var speechHelper: SpeechRecognizerHelper? = null
+        private var speechHelper: BaiduSpeechRecognizerHelper? = null
         private val addressCache = LruCache<Long, String>(20)
-    
-        // ⭐ 新增：用于管理定位客户端
-        private var locationClient: AMapLocationClient? = null
     
         private val requestId = AtomicLong(0)
     
@@ -163,17 +172,104 @@
             }
         }
     
+        // ⭐ 新增：方言选择（默认普通话）
+        private var _currentLanguage = MutableStateFlow("zh_cn")  // zh_cn: 中文
+        private var _currentAccent = MutableStateFlow("mandarin")  // mandarin: 普通话
+        val currentLanguage = _currentLanguage.asStateFlow()
+        val currentAccent = _currentAccent.asStateFlow()
+        
+        // ⭐ 新增：支持的方言列表
+        data class DialectOption(val name: String, val language: String, val accent: String)
+        
+        val supportedDialects = listOf(
+            DialectOption("普通话", "zh_cn", "mandarin"),
+            DialectOption("粤语", "zh_cn", "cantonese"),
+            DialectOption("四川话", "zh_cn", "sichuan"),
+            DialectOption("河南话", "zh_cn", "henan"),
+            DialectOption("东北话", "zh_cn", "northeastern"),
+            DialectOption("山东话", "zh_cn", "shandong"),
+            DialectOption("湖南话", "zh_cn", "hunan"),
+            DialectOption("福建话", "zh_cn", "fujian"),
+            DialectOption("陕西话", "zh_cn", "shaanxi"),
+            DialectOption("山西话", "zh_cn", "shanxi"),
+            DialectOption("江西话", "zh_cn", "jiangxi"),
+            DialectOption("江苏话", "zh_cn", "jiangsu"),
+            DialectOption("浙江话", "zh_cn", "zhejiang"),
+            DialectOption("安徽话", "zh_cn", "anhui"),
+            DialectOption("湖北话", "zh_cn", "hubei"),
+            DialectOption("贵州话", "zh_cn", "guizhou"),
+            DialectOption("云南话", "zh_cn", "yunnan"),
+            DialectOption("广西话", "zh_cn", "guangxi")
+        )
+        
+        // ⭐ 新增：切换方言
+        fun setDialect(language: String, accent: String) {
+            _currentLanguage.value = language
+            _currentAccent.value = accent
+            Log.d("HomeViewModel", "🌍 切换方言: language=$language, accent=$accent")
+        }
+    
         fun startVoiceInput(context: Context) {
-            if (speechHelper == null) {
-                speechHelper = SpeechRecognizerHelper(context) { result ->
-                    val text = parseVoiceResult(result)
-                    updateDestination(text)
-                    searchPoi(text)
-                    _isListening.value = false
-                }
+            Log.d("HomeViewModel", "=== startVoiceInput 被调用 ===")
+            Log.d("HomeViewModel", "speechHelper=${speechHelper != null}, isListening=${_isListening.value}")
+            Log.d("HomeViewModel", "当前方言: language=${_currentLanguage.value}, accent=${_currentAccent.value}")
+            
+            // ⭐ 修改：如果已经在监听，则停止（切换模式）
+            if (_isListening.value) {
+                Log.d("HomeViewModel", "⚠️ 已经在监听中，停止录音")
+                stopVoiceInput()
+                return
             }
-            _isListening.value = true
-            speechHelper?.startListening()
+            
+            // ⭐ 修改：如果 speechHelper 存在但不在监听，销毁后重新创建
+            if (speechHelper != null) {
+                Log.d("HomeViewModel", "⚠️ 清理旧的 speechHelper")
+                speechHelper?.destroy()
+                speechHelper = null
+            }
+            
+            try {
+                // ⭐ 修改：使用百度语音识别，传入当前选择的方言
+                val baiduLanguage = when (_currentAccent.value) {
+                    "mandarin" -> "zh-CN"
+                    "cantonese" -> "zh-HK"
+                    "sichuan" -> "zh-SICHUAN"
+                    else -> "zh-CN"
+                }
+                
+                speechHelper = BaiduSpeechRecognizerHelper(
+                    context = context,
+                    onResult = { finalText ->
+                        // 最终结果：更新文本，但不自动搜索
+                        Log.d("HomeViewModel", "✅ 百度语音最终结果: $finalText")
+                        if (finalText.isNotBlank()) {
+                            _voiceText.value = finalText
+                            updateDestination(finalText)  // ⭐ 只更新目的地，不自动搜索
+                        } else {
+                            Log.w("HomeViewModel", "⚠️ 语音识别结果为空")
+                        }
+                        _isListening.value = false
+                        speechHelper = null  // ⭐ 清空引用
+                    },
+                    onPartialResult = { partialText ->
+                        // ⭐ 实时部分结果：像微信一样逐字显示
+                        Log.d("HomeViewModel", "🔄 百度语音实时结果: $partialText")
+                        if (partialText.isNotBlank()) {
+                            _voiceText.value = partialText
+                            updateDestination(partialText)  // ⭐ 实时更新 UI
+                        }
+                    },
+                    language = baiduLanguage  // ⭐ 传入方言
+                )
+                _isListening.value = true
+                _voiceText.value = ""  // ⭐ 清空之前的文本
+                speechHelper?.startListening()
+                Log.d("HomeViewModel", "✅ 百度语音识别已启动")
+            } catch (e: Exception) {
+                Log.e("HomeViewModel", "❌ 启动语音识别失败: ${e.message}", e)
+                _isListening.value = false
+                speechHelper = null
+            }
         }
     
         private fun parseVoiceResult(raw: String): String {
@@ -218,50 +314,11 @@
         }
     
         fun stopVoiceInput() {
+            Log.d("HomeViewModel", "=== stopVoiceInput 被调用 ===")
             speechHelper?.destroy()
+            speechHelper = null  // ⭐ 修改：清空引用，防止内存泄漏
             _isListening.value = false
-        }
-    
-        // ⭐ 修改：使用 Application Context，避免内存泄漏
-        private var hasInitializedLocation = false  // ⭐ 新增：控制首次定位
-        
-        fun startLocation(context: Context) {
-            // ⭐ 新增：仅在首次调用时执行定位（进入 App 时）
-            if (hasInitializedLocation) {
-                Log.d("HomeViewModel", "✅ 已经初始化过位置，跳过定位")
-                return
-            }
-            hasInitializedLocation = true
-            
-            // ⭐ 使用 appContext (ApplicationContext) 而不是传入的 Context
-            locationClient?.stopLocation()
-            locationClient?.onDestroy()  // ⭐ 修改：使用 onDestroy() 方法
-            
-            locationClient = AMapLocationClient(appContext).apply {
-                val option = AMapLocationClientOption().apply {
-                    locationMode = AMapLocationClientOption.AMapLocationMode.Hight_Accuracy
-                    isOnceLocation = true
-                    isNeedAddress = false
-                    httpTimeOut = 30000
-                }
-                setLocationOption(option)
-                
-                setLocationListener { aMapLocation: AMapLocation ->
-                    if (aMapLocation.errorCode == 0) {
-                        val latLng = LatLng(aMapLocation.latitude, aMapLocation.longitude)
-                        _currentLocation.value = latLng
-                        _locationAccuracy.value = aMapLocation.accuracy
-                        Log.d("HomeViewModel", "定位成功：纬度=${aMapLocation.latitude}, 经度=${aMapLocation.longitude}, 精度=${aMapLocation.accuracy}m")
-                        
-                        viewModelScope.launch {
-                            _events.send(HomeEvent.LocationUpdated(aMapLocation.latitude, aMapLocation.longitude))
-                        }
-                    } else {
-                        Log.e("HomeViewModel", "定位失败：${aMapLocation.errorInfo}")
-                    }
-                }
-                startLocation()
-            }
+            _voiceText.value = ""  // ⭐ 清空语音文本
         }
     
         fun updateCurrentLocation(lat: Double, lng: Double) {
@@ -606,28 +663,28 @@
                     val simplifiedKeyword = keyword.replace(Regex("(校区 | 区 | 分校 | 分院)$"), "")
                     Log.d("HomeViewModel", "原始关键词：$keyword, 简化后：$simplifiedKeyword")
                     
-                    // ⭐ 修改：优先使用 nearby 接口，失败后再尝试全国搜索
+                    // ⭐ 修改：主页搜索框优先使用 searchDestination（后端文档推荐）
                     val result = if (!nationwide && location != null) {
-                        Log.d("HomeViewModel", "🔍 调用 searchNearby 接口")
+                        Log.d("HomeViewModel", "🔍 调用 searchDestination 接口（主页搜索框推荐）")
                         Log.d("HomeViewModel", "  - keyword=${simplifiedKeyword}")
                         Log.d("HomeViewModel", "  - lat=${location.latitude}, lng=${location.longitude}")
+                        apiService.searchDestination(
+                            keyword = simplifiedKeyword,
+                            lat = location.latitude,
+                            lng = location.longitude
+                        )
+                    } else {
+                        Log.d("HomeViewModel", "🔍 调用 searchNearby 接口作为降级")
+                        Log.d("HomeViewModel", "  - keyword=${simplifiedKeyword}")
+                        Log.d("HomeViewModel", "  - lat=${location?.latitude ?: 0.0}, lng=${location?.longitude ?: 0.0}")
                         Log.d("HomeViewModel", "  - radius=5000")
                         apiService.searchNearby(
                             keyword = simplifiedKeyword,
-                            lat = location.latitude,
-                            lng = location.longitude,
+                            lat = location?.latitude ?: 0.0,
+                            lng = location?.longitude ?: 0.0,
                             page = 1,
                             pageSize = 20,
                             radius = 5000
-                        )
-                    } else {
-                        Log.d("HomeViewModel", "🔍 调用 searchDestination 接口作为降级")
-                        Log.d("HomeViewModel", "  - keyword=${simplifiedKeyword}")
-                        Log.d("HomeViewModel", "  - lat=${location?.latitude ?: 0.0}, lng=${location?.longitude ?: 0.0}")
-                        apiService.searchDestination(
-                            keyword = simplifiedKeyword,
-                            lat = location?.latitude ?: 0.0,
-                            lng = location?.longitude ?: 0.0
                         )
                     }
                     
@@ -666,16 +723,19 @@
                         }
                     } else {
                         Log.e("HomeViewModel", "❌ 后端搜索失败：${result.message}")
-                        // ⭐ 修改：如果 nearby 失败，尝试 searchDestination
+                        // ⭐ 修改：如果 searchDestination 失败，尝试 searchNearby
                         if (!nationwide && location != null) {
-                            Log.d("HomeViewModel", "nearby 接口失败，尝试 searchDestination")
-                            val fallbackResult = apiService.searchDestination(
+                            Log.d("HomeViewModel", "searchDestination 接口失败，尝试 searchNearby")
+                            val fallbackResult = apiService.searchNearby(
                                 keyword = simplifiedKeyword,
                                 lat = location.latitude,
-                                lng = location.longitude
+                                lng = location.longitude,
+                                page = 1,
+                                pageSize = 20,
+                                radius = 5000
                             )
                             
-                            Log.d("HomeViewModel", "📥 searchDestination 响应:")
+                            Log.d("HomeViewModel", "📥 searchNearby 响应:")
                             Log.d("HomeViewModel", "  - code=${fallbackResult.code}")
                             Log.d("HomeViewModel", "  - data size=${fallbackResult.data?.size}")
                             
@@ -690,7 +750,7 @@
                                         }
                                     )
                                     _backendPoiResults.value = sortedPoiList
-                                    Log.d("HomeViewModel", "✅ searchDestination 成功：${poiList.size} 个结果，已按评分排序")
+                                    Log.d("HomeViewModel", "✅ searchNearby 成功：${poiList.size} 个结果，已按评分排序")
                                 }
                                 return@launch
                             }
@@ -704,16 +764,8 @@
                     }
                 } catch (e: Exception) {
                     Log.e("HomeViewModel", "❌ 后端搜索异常", e)
-                    // ⭐ 修改：捕获 404 异常后的降级处理
-                    if (e is retrofit2.HttpException) {
-                        Log.e("HomeViewModel", "HTTP 错误码：${e.code()}")
-                        Log.e("HomeViewModel", "HTTP 错误信息：${e.message}")
-                        if (e.code() == 404) {
-                            Log.w("HomeViewModel", "接口不存在，使用高德地图 SDK 搜索")
-                            searchPoi(keyword)  // 使用高德 SDK 的本地搜索
-                            return@launch
-                        }
-                    }
+                    // ⭐ 修改：不再降级到 SDK 搜索，直接提示用户
+                    Log.e("HomeViewModel", "⚠️ 搜索失败：${e.message}")
                     
                     if (!nationwide) {
                         Log.d("HomeViewModel", "后端搜索异常，切换到全国搜索模式")
@@ -726,57 +778,7 @@
             }
         }
     
-        // ⭐ 修改：移除反射，使用强类型
-        fun searchPoi(keyword: String) {
-            if (keyword.isBlank()) {
-                Log.e("HomeViewModel", "搜索关键词为空")
-                return
-            }
-            _isSearching.value = true
-            _searchResults.value = emptyList()
-            Log.d("HomeViewModel", "开始搜索关键词：$keyword")
-    
-            val location = _currentLocation.value
-            Log.d("HomeViewModel", "当前定位：$location")
-    
-            val query = PoiSearch.Query(keyword, "", "")
-            query.pageSize = 20
-    
-            val poiSearch = PoiSearch(appContext, query)
-            
-            // ⭐ 修改：使用接口实现，不依赖具体的 PoiItem 类
-            poiSearch.setOnPoiSearchListener(object : PoiSearch.OnPoiSearchListener {
-                override fun onPoiSearched(result: PoiResult?, rCode: Int) {
-                    _isSearching.value = false
-                    if (rCode == 10000) {
-                        val pois = result?.pois ?: emptyList()
-                        val location = _currentLocation.value
-                        if (location != null) {
-                            val currentLatLng = LatLng(location.latitude, location.longitude)
-                            val sortedPois = pois.sortedBy { poi ->
-                                val poiLatLng = LatLng(poi.latLonPoint.latitude, poi.latLonPoint.longitude)
-                                AMapUtils.calculateLineDistance(currentLatLng, poiLatLng)
-                            }
-                            _searchResults.value = sortedPois
-                            Log.d("HomeViewModel", "搜索到 ${sortedPois.size} 个地点，已按距离排序")
-                        } else {
-                            _searchResults.value = pois
-                            Log.d("HomeViewModel", "搜索到 ${pois.size} 个地点")
-                        }
-                    } else {
-                        Log.e("HomeViewModel", "POI 搜索失败，错误码：$rCode")
-                        _geocodeError.value = "搜索失败"
-                    }
-                }
-                
-                override fun onPoiItemSearched(p0: PoiItem?, rCode: Int) {
-                    // 此方法用于根据 ID 查询单个 POI 详情，当前业务未使用
-                    Log.d("HomeViewModel", "onPoiItemSearched called, rCode=$rCode")
-                }
-            })
-            
-            poiSearch.searchPOIAsyn()
-        }
+        // ⭐ 已移除 searchPoi 方法，统一使用后端 API 搜索
     
         fun clearSearchResults() {
             _searchResults.value = emptyList()
@@ -1044,8 +1046,8 @@
                             Log.d("HomeViewModel", "✅ 订单创建成功！")
                             Log.d("HomeViewModel", "  - 订单号：${order.orderNo}")
                             Log.d("HomeViewModel", "  - 目的地：${order.poiName}")
-                            Log.d("HomeViewModel", "  - 坐标：lat=${order.lat}, lng=${order.lng}")
-                            Log.d("HomeViewModel", "  - 预估价格：¥${order.estimatedPrice}")
+                            Log.d("HomeViewModel", "  - 坐标：lat=${order.destLat}, lng=${order.destLng}")
+                            Log.d("HomeViewModel", "  - 预估价格：¥${order.estimatePrice}")
                             _orderState.value = OrderState.Success(order)
                             // ⭐ 触发事件，通知 UI 跳转
                             _events.send(HomeEvent.OrderCreated(order))
@@ -1079,12 +1081,6 @@
             super.onCleared()
             
             Log.d("HomeViewModel", "=== HomeViewModel onCleared 被调用 ===")
-            Log.d("HomeViewModel", "注意：只清理定位资源，不影响 WebSocket")
-            
-            // ⭐ 停止并销毁定位客户端
-            locationClient?.stopLocation()
-            locationClient?.onDestroy()  // ⭐ 修改：使用 onDestroy() 方法
-            locationClient = null
             
             // ⭐ 销毁语音识别助手
             speechHelper?.destroy()

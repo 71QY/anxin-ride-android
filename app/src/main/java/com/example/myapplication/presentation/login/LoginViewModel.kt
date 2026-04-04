@@ -25,8 +25,9 @@ class LoginViewModel @Inject constructor(
     // ⭐ 新增：登录步骤状态（B 站风格）
     sealed class LoginStep {
         object PhoneInput : LoginStep()  // 第一步：输入手机号
-        object VerifyCode : LoginStep()  // 第二步：验证验证码并重置密码
-        object RegisterInfo : LoginStep() // 第三步：注册信息（仅注册模式）
+        object VerifyCode : LoginStep()  // 第二步：验证验证码
+        object SetNewPassword : LoginStep() // 第三步：设置新密码（仅忘记密码模式）
+        object RegisterInfo : LoginStep() // 第四步：注册信息（仅注册模式）
     }
     
     private val _currentStep = MutableStateFlow<LoginStep>(LoginStep.PhoneInput)
@@ -90,7 +91,15 @@ class LoginViewModel @Inject constructor(
     val agreeTerms: StateFlow<Boolean> = _agreeTerms.asStateFlow()
 
     fun updatePhone(phone: String) { _phone.value = phone }
-    fun updateCode(code: String) { _code.value = code }
+    fun updateCode(code: String) {
+        _code.value = code
+        
+        // ⭐ 忘记密码模式：验证码输入完成（6位）后自动跳转到设置新密码页面
+        if (_isForgotPasswordMode.value && code.length == 6) {
+            Log.d("LoginViewModel", "验证码输入完成（6位），自动跳转到 SetNewPassword")
+            _currentStep.value = LoginStep.SetNewPassword
+        }
+    }
     fun updatePassword(password: String) { _password.value = password }
     fun updateConfirmPassword(confirmPassword: String) { _confirmPassword.value = confirmPassword }
     fun updateNickname(nickname: String) { _nickname.value = nickname }
@@ -115,31 +124,10 @@ class LoginViewModel @Inject constructor(
                 
                 // ⭐ 修改：忘记密码模式的处理逻辑
                 if (_isForgotPasswordMode.value) {
-                    // ⭐ 修改：忘记密码模式下直接验证所有字段并重置密码
-                    if (_code.value.isBlank()) {
-                        _errorMessage.value = "请输入验证码"
-                        Log.e("LoginViewModel", "验证码为空")
-                        return
-                    }
-                    if (_password.value.isBlank()) {
-                        _errorMessage.value = "请输入新密码"
-                        Log.e("LoginViewModel", "新密码为空")
-                        return
-                    }
-                    if (_password.value != _confirmPassword.value) {
-                        _errorMessage.value = "两次输入的密码不一致"
-                        Log.e("LoginViewModel", "密码不一致")
-                        return
-                    }
-                    if (!isValidPassword(_password.value)) {
-                        _errorMessage.value = "密码必须至少 8 位，且包含字母和特殊符号"
-                        Log.e("LoginViewModel", "密码格式错误")
-                        return
-                    }
-                    // 发送验证码并直接重置密码
+                    // 第一步：只需要验证手机号，发送验证码后跳转到验证码页面
                     sendCode()
-                    Log.d("LoginViewModel", "忘记密码模式，直接调用 forgotPassword()")
-                    forgotPassword()
+                    Log.d("LoginViewModel", "忘记密码模式，发送验证码，跳转到 VerifyCode")
+                    _currentStep.value = LoginStep.VerifyCode
                 } else if (_loginType.value == LoginRequest.TYPE_CODE) {
                     // 验证码模式：需要验证码才能登录/注册
                     if (_code.value.isBlank()) {
@@ -182,16 +170,12 @@ class LoginViewModel @Inject constructor(
                 Log.d("LoginViewModel", "isForgotPasswordMode = $_isForgotPasswordMode.value")
                 Log.d("LoginViewModel", "code = ${_code.value}")
                 
-                // ⭐ 忘记密码模式：验证验证码后直接调用重置密码
+                // ⭐ 忘记密码模式：验证验证码后跳转到设置新密码页面
                 if (_isForgotPasswordMode.value) {
-                    if (_code.value.isBlank()) {
-                        _errorMessage.value = "请输入验证码"
-                        Log.e("LoginViewModel", "验证码为空")
-                        return
-                    }
-                    // ⭐ 修改：直接调用 forgotPassword()，不跳转
-                    Log.d("LoginViewModel", "忘记密码模式，验证码已输入，直接调用 forgotPassword()")
-                    forgotPassword()
+                    // ⭐ 自动跳转逻辑已经在 updateCode 中实现，这里不再重复处理
+                    // 如果用户手动点击按钮，也跳转到下一步
+                    Log.d("LoginViewModel", "忘记密码模式，跳转到 SetNewPassword")
+                    _currentStep.value = LoginStep.SetNewPassword
                 } else {
                     // 普通登录/注册流程
                     if (_loginType.value == LoginRequest.TYPE_CODE) {
@@ -220,6 +204,27 @@ class LoginViewModel @Inject constructor(
                     }
                 }
             }
+            is LoginStep.SetNewPassword -> {
+                Log.d("LoginViewModel", "进入 SetNewPassword 分支")
+                // 验证密码
+                if (_password.value.isBlank()) {
+                    _errorMessage.value = "请输入新密码"
+                    Log.e("LoginViewModel", "新密码为空")
+                    return
+                }
+                if (_password.value != _confirmPassword.value) {
+                    _errorMessage.value = "两次输入的密码不一致"
+                    Log.e("LoginViewModel", "密码不一致")
+                    return
+                }
+                if (!isValidPassword(_password.value)) {
+                    _errorMessage.value = "密码必须是 10 位，且包含字母和特殊符号"
+                    Log.e("LoginViewModel", "密码格式错误")
+                    return
+                }
+                Log.d("LoginViewModel", "密码验证通过，调用 forgotPassword()")
+                forgotPassword()
+            }
             is LoginStep.RegisterInfo -> {
                 Log.d("LoginViewModel", "进入 RegisterInfo 分支，调用 register()")
                 register()
@@ -231,8 +236,18 @@ class LoginViewModel @Inject constructor(
         _errorMessage.value = null
         when (_currentStep.value) {
             is LoginStep.VerifyCode -> {
-                _currentStep.value = LoginStep.PhoneInput
-                _code.value = ""
+                // ⭐ 如果是注册模式且在验证码步骤，返回到 PhoneInput 但保持注册模式
+                if (_isRegisterMode.value) {
+                    _currentStep.value = LoginStep.PhoneInput
+                    _code.value = ""
+                    Log.d("LoginViewModel", "注册模式下从 VerifyCode 返回到 PhoneInput")
+                } else {
+                    _currentStep.value = LoginStep.PhoneInput
+                    _code.value = ""
+                }
+            }
+            is LoginStep.SetNewPassword -> {
+                _currentStep.value = LoginStep.VerifyCode
                 _password.value = ""
                 _confirmPassword.value = ""
             }
@@ -242,7 +257,18 @@ class LoginViewModel @Inject constructor(
                 _confirmPassword.value = ""
                 _nickname.value = ""
             }
-            else -> {}
+            is LoginStep.PhoneInput -> {
+                // ⭐ 如果在 PhoneInput 且是注册模式，点击返回则切换回登录模式
+                if (_isRegisterMode.value) {
+                    _isRegisterMode.value = false
+                    _phone.value = ""
+                    _code.value = ""
+                    _password.value = ""
+                    _confirmPassword.value = ""
+                    _nickname.value = ""
+                    Log.d("LoginViewModel", "从注册模式切换回登录模式")
+                }
+            }
         }
     }
 
@@ -318,6 +344,7 @@ class LoginViewModel @Inject constructor(
         _nickname.value = ""
         _isForgotPasswordMode.value = !_isForgotPasswordMode.value
         _isRegisterMode.value = false
+        _loginType.value = LoginRequest.TYPE_CODE  // 忘记密码必须使用验证码
         _errorMessage.value = null
         Log.d("LoginViewModel", "切换到忘记密码模式：${_isForgotPasswordMode.value}")
     }
@@ -411,8 +438,17 @@ class LoginViewModel @Inject constructor(
                     _loginSuccess.value = true
                     _showLoginDialog.value = true
                 } else {
-                    _errorMessage.value = response.message ?: "登录失败"
-                    Log.e("LoginViewModel", "登录失败：${response.message}")
+                    val errorMsg = response.message ?: "登录失败"
+                    Log.e("LoginViewModel", "登录失败：$errorMsg")
+                    
+                    // ⭐ 检测是否是账户不存在的错误，自动跳转到注册
+                    if (isUserNotExistError(errorMsg)) {
+                        Log.d("LoginViewModel", "检测到账户不存在，自动跳转到注册模式")
+                        _errorMessage.value = "该手机号未注册，已为您切换到注册模式"
+                        switchToRegisterMode()
+                    } else {
+                        _errorMessage.value = errorMsg
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("LoginViewModel", "登录异常", e)
@@ -439,7 +475,7 @@ class LoginViewModel @Inject constructor(
             }
             
             if (!isValidPassword(_password.value)) {
-                _errorMessage.value = "密码必须至少 8 位，且包含字母和特殊符号"
+                _errorMessage.value = "密码必须是 10 位，且包含字母和特殊符号"
                 Log.e("LoginViewModel", "密码格式错误")
                 _isLoading.value = false
                 return@launch
@@ -509,7 +545,7 @@ class LoginViewModel @Inject constructor(
             }
             
             if (!isValidPassword(_password.value)) {
-                _errorMessage.value = "密码必须至少 8 位，且包含字母和特殊符号"
+                _errorMessage.value = "密码必须是 10 位，且包含字母和特殊符号"
                 _isLoading.value = false
                 return@launch
             }
@@ -626,8 +662,17 @@ class LoginViewModel @Inject constructor(
                     _loginSuccess.value = true
                     _showLoginDialog.value = true
                 } else {
-                    _errorMessage.value = response.message ?: "登录失败"
-                    Log.e("LoginViewModel", "密码登录失败：${response.message}")
+                    val errorMsg = response.message ?: "登录失败"
+                    Log.e("LoginViewModel", "密码登录失败：$errorMsg")
+                    
+                    // ⭐ 检测是否是账户不存在的错误，自动跳转到注册
+                    if (isUserNotExistError(errorMsg)) {
+                        Log.d("LoginViewModel", "检测到账户不存在，自动跳转到注册模式")
+                        _errorMessage.value = "该手机号未注册，已为您切换到注册模式"
+                        switchToRegisterMode()
+                    } else {
+                        _errorMessage.value = errorMsg
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("LoginViewModel", "密码登录异常", e)
@@ -649,9 +694,9 @@ class LoginViewModel @Inject constructor(
         return regex.matches(phone)
     }
 
-    // 密码格式验证：8 位，包含字母和特殊符号
+    // 密码格式验证：至少 10 位，包含字母和特殊符号
     fun isValidPassword(password: String): Boolean {
-        if (password.length < 8) return false
+        if (password.length < 10) return false
         val hasLetter = password.any { it.isLetter() }
         val hasSymbol = password.any { !it.isLetterOrDigit() }
         return hasLetter && hasSymbol
@@ -659,5 +704,28 @@ class LoginViewModel @Inject constructor(
 
     fun toggleAgreeTerms() {
         _agreeTerms.value = !_agreeTerms.value
+    }
+    
+    // ⭐ 新增：检测是否是账户不存在的错误
+    private fun isUserNotExistError(message: String): Boolean {
+        val lowerMessage = message.lowercase()
+        return lowerMessage.contains("用户不存在") || 
+               lowerMessage.contains("账户不存在") || 
+               lowerMessage.contains("账号不存在") ||
+               lowerMessage.contains("not found") ||
+               lowerMessage.contains("not exist") ||
+               lowerMessage.contains("未注册")
+    }
+    
+    // ⭐ 新增：切换到注册模式（保留手机号和验证码）
+    private fun switchToRegisterMode() {
+        _isRegisterMode.value = true
+        _isForgotPasswordMode.value = false
+        // 保留手机号和验证码，只清空密码相关字段
+        _password.value = ""
+        _confirmPassword.value = ""
+        _nickname.value = ""
+        _currentStep.value = LoginStep.RegisterInfo
+        Log.d("LoginViewModel", "已切换到注册模式，当前步骤：RegisterInfo")
     }
 }

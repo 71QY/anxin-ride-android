@@ -6,7 +6,11 @@ import com.example.myapplication.BuildConfig
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.receiveAsFlow
-import okhttp3.*
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -71,11 +75,14 @@ class ChatWebSocketClient @Inject constructor() {
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 super.onMessage(webSocket, text)
+                Log.d("WebSocket", "📥 收到原始消息 (${text.length} 字符): ${text.take(100)}...")
+                
                 val result = _messages.trySend(text)
                 if (result.isFailure) {
-                    Log.e("WebSocket", "消息发送到 Channel 失败：${result.exceptionOrNull()?.message}")
+                    Log.e("WebSocket", "❌ 消息发送到 Channel 失败：${result.exceptionOrNull()?.message}")
+                } else {
+                    Log.d("WebSocket", "✅ 消息已发送到 Channel")
                 }
-                Log.d("WebSocket", "收到消息：$text")
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {

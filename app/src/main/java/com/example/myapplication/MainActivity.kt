@@ -57,6 +57,7 @@ import com.amap.api.maps.MapsInitializer
 import com.example.myapplication.presentation.chat.ChatScreen
 import com.example.myapplication.presentation.chat.ChatViewModel
 import com.example.myapplication.presentation.chat.ChatMode  // ⭐ 新增：导入聊天模式枚举
+import com.example.myapplication.presentation.chat.ChatListScreen  // ⭐ 新增：导入聊天列表界面
 import com.example.myapplication.presentation.home.HomeScreen
 import com.example.myapplication.presentation.home.HomeViewModel
 import com.example.myapplication.presentation.login.LoginScreen
@@ -101,11 +102,15 @@ class MainActivity : ComponentActivity() {
             // ⭐ 修改：添加异常处理，避免讯飞 SDK 初始化失败导致崩溃
             try {
                 val iflytekAppid = BuildConfig.IFLYTEK_APPID
+                Log.d(TAG, "🎤 讯飞 AppID: $iflytekAppid")
                 if (iflytekAppid.isNotBlank()) {
                     SpeechUtility.createUtility(this, SpeechConstant.APPID + "=" + iflytekAppid)
+                    Log.d(TAG, "✅ 讯飞 SDK 初始化完成（请查看后续日志确认是否成功）")
+                } else {
+                    Log.e(TAG, "❌ 讯飞 AppID 为空，请检查 build.gradle.kts 配置")
                 }
             } catch (e: Exception) {
-                // 不抛出异常，继续执行
+                Log.e(TAG, "❌ 讯飞 SDK 初始化异常", e)
             }
 
             enableEdgeToEdge()
@@ -113,21 +118,19 @@ class MainActivity : ComponentActivity() {
             setContent {
                 MyApplicationTheme {
                     val navController = rememberNavController()
+                    val context = LocalContext.current
 
-                    // ⭐ 优化：合并位置监听逻辑，只使用一个 LaunchedEffect
+                    // ⭐ 新增：应用启动时立即触发定位（在登录成功后）
                     LaunchedEffect(Unit) {
-                        // 合并监听：位置 Flow
-                        homeViewModel.currentLocation.collect { location ->
-                            location?.let {
-                                chatViewModel.syncLocationFromHome(it.latitude, it.longitude)
-                            }
-                        }
+                        Log.d("MainActivity", "🚀 应用启动，准备触发定位")
                     }
 
                     NavHost(navController = navController, startDestination = "login") {
                         composable("login") {
                             LoginScreen(
                                 onLoginSuccess = {
+                                    Log.d("MainActivity", "✅ 登录成功")
+                                    // ⭐ 修改：使用高德地图自带定位，不需要手动启动
                                     navController.navigate("main") {
                                         popUpTo("login") { inclusive = true }
                                     }
@@ -138,6 +141,21 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         composable("main") {
+                            val context = LocalContext.current
+                            
+                            // ⭐ 新增：监听位置变化并同步到 ChatViewModel
+                            LaunchedEffect(Unit) {
+                                Log.d("MainActivity", "📍 开始监听位置变化")
+                                homeViewModel.currentLocation.collect { location ->
+                                    if (location != null) {
+                                        Log.d("MainActivity", "📍 收到位置更新：lat=${location.latitude}, lng=${location.longitude}")
+                                        chatViewModel.syncLocationFromHome(location.latitude, location.longitude)
+                                    } else {
+                                        Log.w("MainActivity", "⚠️ 位置为 null")
+                                    }
+                                }
+                            }
+                            
                             MyApplicationApp(
                                 homeViewModel = homeViewModel,
                                 chatViewModel = chatViewModel,
@@ -165,7 +183,10 @@ class MainActivity : ComponentActivity() {
                         composable("order_detail/{orderId}") { backStackEntry ->
                             val orderId = backStackEntry.arguments?.getString("orderId")?.toLongOrNull()
                             if (orderId != null) {
-                                OrderDetailScreen(orderId = orderId)
+                                OrderDetailScreen(
+                                    orderId = orderId,
+                                    onBackClick = { navController.popBackStack() }  // ⭐ 新增：返回键回调
+                                )
                             } else {
                                 Text("无效的订单 ID")
                             }
@@ -178,12 +199,28 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         composable("chat") {
+                            ChatListScreen(
+                                onBackClick = { navController.popBackStack() },
+                                onSessionSelected = { sessionId: String ->
+                                    Log.d(TAG, "选择会话: $sessionId")
+                                },
+                                onNavigateToAgent = {
+                                    navController.navigate("agent_chat")
+                                }
+                            )
+                        }
+                        // ⭐ 新增：智能体聊天页面
+                        composable("agent_chat") {
                             ChatScreen(
                                 viewModel = chatViewModel,
                                 onNavigateToOrder = { orderId: Long ->
-                                    navController.navigate("order_detail/$orderId")
+                                    if (orderId == -1L) {
+                                        navController.popBackStack()
+                                    } else {
+                                        navController.navigate("order_detail/$orderId")
+                                    }
                                 },
-                                chatMode = ChatMode.AGENT  // ⭐ 新增：默认智能体模式
+                                chatMode = ChatMode.AGENT
                             )
                         }
                     }
@@ -248,6 +285,15 @@ fun MyApplicationApp(
     onNavigateToChat: () -> Unit = {}
 ) {
     var currentDestination by rememberSaveable { mutableStateOf<String?>("home") }
+    val context = LocalContext.current
+    
+    // ⭐ 新增：每次切换到主页时刷新定位
+    LaunchedEffect(currentDestination) {
+        if (currentDestination == "home") {
+            Log.d("MyApplicationApp", "🔄 返回主页")
+            // ⭐ 修改：使用高德地图自带定位，不需要手动启动
+        }
+    }
 
     Scaffold(
         bottomBar = {
@@ -318,9 +364,6 @@ fun MyApplicationApp(
                     HomeScreen(
                         viewModel = homeViewModel,
                         onNavigateToProfile = { currentDestination = "profile" },
-                        onStartFloatService = { 
-                            // ⭐ 修改：禁用悬浮窗启动
-                        },
                         onRequestLocationPermission = { },
                         onNavigateToOrder = { orderId -> onNavigateToOrderDetail(orderId.toLongOrNull() ?: 0L) },
                         onNavigateToChat = onNavigateToChat
@@ -355,10 +398,21 @@ fun MyApplicationApp(
                     }
                 }
                 "chat" -> {
+                    ChatListScreen(
+                        onBackClick = { currentDestination = "home" },
+                        onSessionSelected = { sessionId: String ->
+                            // 会话选择逻辑
+                        },
+                        onNavigateToAgent = {
+                            currentDestination = "agent_chat"
+                        }
+                    )
+                }
+                "agent_chat" -> {
                     ChatScreen(
                         viewModel = chatViewModel,
                         onNavigateToOrder = onNavigateToOrderDetail,
-                        chatMode = ChatMode.AGENT  // ⭐ 新增：默认智能体模式
+                        chatMode = ChatMode.AGENT
                     )
                 }
                 "profile" -> {
@@ -370,7 +424,6 @@ fun MyApplicationApp(
                     HomeScreen(
                         viewModel = homeViewModel,
                         onNavigateToProfile = { currentDestination = "profile" },
-                        onStartFloatService = { },
                         onRequestLocationPermission = { },
                         onNavigateToOrder = { orderId -> onNavigateToOrderDetail(orderId.toLongOrNull() ?: 0L) },
                         onNavigateToChat = onNavigateToChat

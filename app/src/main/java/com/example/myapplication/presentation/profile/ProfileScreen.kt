@@ -437,6 +437,41 @@ fun ProfileScreen(
                             Column(
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
+                                // ⭐ 新增：显示成功/错误消息
+                                successMessage?.let { msg ->
+                                    if (msg.contains("密码")) {
+                                        Card(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = CardDefaults.cardColors(
+                                                containerColor = MaterialTheme.colorScheme.primaryContainer
+                                            )
+                                        ) {
+                                            Text(
+                                                text = "✅ $msg",
+                                                modifier = Modifier.padding(12.dp),
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                        }
+                                    }
+                                }
+                                
+                                errorMessage?.let { msg ->
+                                    if (msg.contains("密码") || msg.contains("验证码")) {
+                                        Card(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = CardDefaults.cardColors(
+                                                containerColor = MaterialTheme.colorScheme.errorContainer
+                                            )
+                                        ) {
+                                            Text(
+                                                text = "❌ $msg",
+                                                modifier = Modifier.padding(12.dp),
+                                                color = MaterialTheme.colorScheme.onErrorContainer
+                                            )
+                                        }
+                                    }
+                                }
+                                
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -471,7 +506,7 @@ fun ProfileScreen(
                                     singleLine = true
                                 )
                                 Text(
-                                    text = "密码要求：10 位数，必须包含至少一个英文字符",
+                                    text = "密码要求：至少 10 位，必须包含字母和特殊符号",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -788,6 +823,9 @@ fun AvatarCropDialog(
 ) {
     val context = LocalContext.current
     var loadedBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var cropScale by remember { mutableStateOf(1f) }
+    var cropOffsetX by remember { mutableStateOf(0f) }
+    var cropOffsetY by remember { mutableStateOf(0f) }
 
     LaunchedEffect(imageUri) {
         try {
@@ -808,18 +846,47 @@ fun AvatarCropDialog(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 loadedBitmap?.let { bitmap ->
-                    val scaledBitmap = Bitmap.createScaledBitmap(bitmap, 200, 200, true)
-                    Image(
-                        bitmap = scaledBitmap.asImageBitmap(),
-                        contentDescription = "头像预览",
+                    // ⭐ 添加手动调整控件
+                    Box(
                         modifier = Modifier
                             .size(200.dp)
-                            .clip(CircleShape)
-                    )
+                            .clip(CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val scaledBitmap = Bitmap.createScaledBitmap(
+                            bitmap,
+                            (bitmap.width * cropScale).toInt(),
+                            (bitmap.height * cropScale).toInt(),
+                            true
+                        )
+                        Image(
+                            bitmap = scaledBitmap.asImageBitmap(),
+                            contentDescription = "头像预览",
+                            modifier = Modifier
+                                .size(200.dp)
+                                .clip(CircleShape)
+                        )
+                    }
+
+                    // ⭐ 缩放滑块
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("调整大小", style = MaterialTheme.typography.bodySmall)
+                        Slider(
+                            value = cropScale,
+                            onValueChange = { cropScale = it },
+                            valueRange = 0.5f..3.0f,
+                            steps = 25
+                        )
+                        Text(
+                            text = "当前缩放: ${(cropScale * 100).toInt()}%",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 } ?: CircularProgressIndicator()
 
                 Text(
-                    text = "系统将自动为您调整头像大小至 200x200 像素",
+                    text = "拖动滑块调整头像大小，确认后系统将自动裁剪为圆形",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -827,7 +894,28 @@ fun AvatarCropDialog(
         },
         confirmButton = {
             Button(
-                onClick = { loadedBitmap?.let { onConfirmCrop(Bitmap.createScaledBitmap(it, 200, 200, true)) } },
+                onClick = {
+                    loadedBitmap?.let { bitmap ->
+                        // ⭐ 创建缩放后的bitmap并裁剪为200x200
+                        val scaledBitmap = Bitmap.createScaledBitmap(
+                            bitmap,
+                            (bitmap.width * cropScale).toInt(),
+                            (bitmap.height * cropScale).toInt(),
+                            true
+                        )
+                        // 居中裁剪200x200
+                        val centerX = (scaledBitmap.width - 200) / 2
+                        val centerY = (scaledBitmap.height - 200) / 2
+                        val croppedBitmap = Bitmap.createBitmap(
+                            scaledBitmap,
+                            maxOf(0, centerX),
+                            maxOf(0, centerY),
+                            200,
+                            200
+                        )
+                        onConfirmCrop(croppedBitmap)
+                    }
+                },
                 enabled = loadedBitmap != null
             ) {
                 Text("确认")

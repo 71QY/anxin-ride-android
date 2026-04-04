@@ -25,11 +25,17 @@ android {
         val websocketUrl = project.findProperty("websocket.url")?.toString() ?: "ws://10.237.36.80:8080/ws/agent"
         val amapKey = project.findProperty("amap.key")?.toString() ?: ""
         val iflytekAppid = project.findProperty("iflytek.appid")?.toString() ?: ""
+        val baiduAppId = project.findProperty("baidu.app.id")?.toString() ?: ""
+        val baiduApiKey = project.findProperty("baidu.api.key")?.toString() ?: ""
+        val baiduSecretKey = project.findProperty("baidu.secret.key")?.toString() ?: ""
         
         buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
         buildConfigField("String", "WEBSOCKET_URL", "\"$websocketUrl\"")
         buildConfigField("String", "AMAP_KEY", "\"$amapKey\"")
         buildConfigField("String", "IFLYTEK_APPID", "\"$iflytekAppid\"")
+        buildConfigField("String", "BAIDU_APP_ID", "\"$baiduAppId\"")
+        buildConfigField("String", "BAIDU_API_KEY", "\"$baiduApiKey\"")
+        buildConfigField("String", "BAIDU_SECRET_KEY", "\"$baiduSecretKey\"")
         
         manifestPlaceholders["AMAP_KEY"] = amapKey
         
@@ -108,6 +114,8 @@ dependencies {
     implementation(libs.accompanist.permissions)
     implementation(files("libs\\Msc.jar"))
     implementation(files("libs\\amap-full-11.1.0.aar"))
+    // ⭐ 新增：百度语音识别 SDK
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
     implementation(libs.retrofit)
     implementation(libs.retrofit.converter.gson)
     implementation(libs.okhttp.logging.interceptor)

@@ -1,6 +1,7 @@
 package com.example.myapplication.data.repository
 
 import android.util.Log
+import com.example.myapplication.core.datastore.TokenManager
 import com.example.myapplication.core.network.ApiService
 import com.example.myapplication.data.model.*
 import javax.inject.Inject
@@ -11,7 +12,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class AgentRepository @Inject constructor(
-    private val apiService: ApiService
+    private val apiService: ApiService,
+    private val tokenManager: TokenManager  // ⭐ 新增：用于获取 userId
 ) {
     /**
      * 智能搜索目的地
@@ -37,7 +39,19 @@ class AgentRepository @Inject constructor(
         )
         
         return try {
-            val response = apiService.agentSearch(request)
+            // ⭐ 获取 userId
+            val userId = tokenManager.getUserId()
+            if (userId == null) {
+                Log.e("AgentRepository", "❌ UserId 为空，用户未登录")
+                return Result(
+                    code = -1,
+                    message = "用户未登录",
+                    data = null
+                )
+            }
+            Log.d("AgentRepository", "UserId: $userId")
+            
+            val response = apiService.agentSearch(userId, request)
             Log.d("AgentRepository", "响应：code=${response.code}, message=${response.message}")
             Log.d("AgentRepository", "type=${response.data?.type}, needConfirm=${response.data?.needConfirm}")
             response
@@ -75,7 +89,19 @@ class AgentRepository @Inject constructor(
         )
         
         return try {
-            val response = apiService.agentConfirm(request)
+            // ⭐ 获取 userId
+            val userId = tokenManager.getUserId()
+            if (userId == null) {
+                Log.e("AgentRepository", "❌ UserId 为空，用户未登录")
+                return Result(
+                    code = -1,
+                    message = "用户未登录",
+                    data = null
+                )
+            }
+            Log.d("AgentRepository", "UserId: $userId")
+            
+            val response = apiService.agentConfirm(userId, request)
             Log.d("AgentRepository", "响应：code=${response.code}, message=${response.message}")
             Log.d("AgentRepository", "type=${response.data?.type}, poi=${response.data?.poi?.name}")
             response
@@ -113,7 +139,19 @@ class AgentRepository @Inject constructor(
         )
         
         return try {
-            val response = apiService.agentImage(request)
+            // ⭐ 获取 userId
+            val userId = tokenManager.getUserId()
+            if (userId == null) {
+                Log.e("AgentRepository", "❌ UserId 为空，用户未登录")
+                return Result(
+                    code = -1,
+                    message = "用户未登录",
+                    data = null
+                )
+            }
+            Log.d("AgentRepository", "UserId: $userId")
+            
+            val response = apiService.agentImage(userId, request)
             Log.d("AgentRepository", "响应：code=${response.code}, message=${response.message}")
             response
         } catch (e: Exception) {

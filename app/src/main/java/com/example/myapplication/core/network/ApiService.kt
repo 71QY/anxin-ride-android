@@ -47,19 +47,28 @@ interface ApiService {
      * 智能搜索目的地（WebSocket 方式的 HTTP 版本）
      */
     @POST("agent/search")
-    suspend fun agentSearch(@Body request: AgentSearchRequest): Result<AgentSearchResponse>
+    suspend fun agentSearch(
+        @Header("X-User-Id") userId: Long,  // ⭐ 新增：必须传递用户 ID
+        @Body request: AgentSearchRequest
+    ): Result<AgentSearchResponse>
 
     /**
      * 确认选择目的地
      */
     @POST("agent/confirm")
-    suspend fun agentConfirm(@Body request: AgentConfirmRequest): Result<AgentSearchResponse>
+    suspend fun agentConfirm(
+        @Header("X-User-Id") userId: Long,  // ⭐ 新增：必须传递用户 ID
+        @Body request: AgentConfirmRequest
+    ): Result<AgentSearchResponse>
 
     /**
      * 图片识别
      */
     @POST("agent/image")
-    suspend fun agentImage(@Body request: AgentImageRequest): Result<AgentSearchResponse>
+    suspend fun agentImage(
+        @Header("X-User-Id") userId: Long,  // ⭐ 新增：必须传递用户 ID
+        @Body request: AgentImageRequest
+    ): Result<AgentSearchResponse>
 
     /**
      * 更新位置

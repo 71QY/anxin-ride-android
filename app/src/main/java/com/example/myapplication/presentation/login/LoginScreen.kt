@@ -92,7 +92,8 @@ fun LoginScreen(
                     )
                 },
                 navigationIcon = {
-                    if (currentStep !is LoginViewModel.LoginStep.PhoneInput) {
+                    // ⭐ 修改：注册模式下始终显示返回按钮，或者在非第一步时显示
+                    if (isRegisterMode || currentStep !is LoginViewModel.LoginStep.PhoneInput) {
                         IconButton(onClick = viewModel::goToPreviousStep) {
                             Icon(
                                 Icons.Default.ArrowBack,
@@ -228,7 +229,7 @@ fun LoginScreen(
                         Spacer(modifier = Modifier.height(8.dp))
 
                         Text(
-                            text = "密码要求：至少 8 位，包含字母和特殊符号",
+                            text = "密码要求：至少 10 位，必须包含字母和特殊符号",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -353,57 +354,9 @@ fun LoginScreen(
                             }
                         }
                         
-                        // ⭐ 新增：忘记密码模式下，直接显示新密码和确认密码输入框
-                        if (isForgotPasswordMode) {
-                            Spacer(modifier = Modifier.height(16.dp))
-                            
-                            // 新密码输入框
-                            OutlinedTextField(
-                                value = password,
-                                onValueChange = viewModel::updatePassword,
-                                label = { Text("新密码*") },
-                                modifier = Modifier.fillMaxWidth(),
-                                visualTransformation = PasswordVisualTransformation(),
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                                singleLine = true,
-                                placeholder = { Text("请输入新密码") }
-                            )
-
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            Text(
-                                text = "密码要求：至少 8 位，包含字母和特殊符号",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-
-                            Spacer(modifier = Modifier.height(16.dp))
-                            
-                            // 确认新密码输入框
-                            OutlinedTextField(
-                                value = confirmPassword,
-                                onValueChange = viewModel::updateConfirmPassword,
-                                label = { Text("确认新密码*") },
-                                modifier = Modifier.fillMaxWidth(),
-                                visualTransformation = PasswordVisualTransformation(),
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                                singleLine = true,
-                                placeholder = { Text("请再次输入新密码") },
-                                isError = password.isNotBlank() && confirmPassword.isNotBlank() && password != confirmPassword
-                            )
-                            
-                            if (password.isNotBlank() && confirmPassword.isNotBlank() && password != confirmPassword) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "两次输入的密码不一致",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(24.dp))
-
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        // ⭐ 新增：错误提示
                         errorMessage?.let {
                             Text(
                                 text = it,
@@ -412,7 +365,10 @@ fun LoginScreen(
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                         }
-
+                        
+                        Spacer(modifier = Modifier.height(24.dp))
+                        
+                        // ⭐ 修改：忘记密码模式：点击重置密码按钮，跳转到第二步
                         Button(
                             onClick = viewModel::goToNextStep,
                             modifier = Modifier
@@ -421,7 +377,6 @@ fun LoginScreen(
                             enabled = when {
                                 // ⭐ 修改：忘记密码模式第一步只需要手机号
                                 isForgotPasswordMode && currentStep is LoginViewModel.LoginStep.PhoneInput -> !isLoading && phone.isNotBlank() && agreeTerms
-                                isForgotPasswordMode -> !isLoading && phone.isNotBlank() && code.isNotBlank() && password.isNotBlank() && confirmPassword.isNotBlank() && password == confirmPassword && agreeTerms
                                 loginType == LoginRequest.TYPE_CODE -> !isLoading && phone.isNotBlank() && code.isNotBlank() && agreeTerms
                                 else -> !isLoading && phone.isNotBlank() && password.isNotBlank() && agreeTerms
                             },
@@ -471,7 +426,7 @@ fun LoginScreen(
                 }
 
                 is LoginViewModel.LoginStep.VerifyCode -> {
-                    // 第二步：展示手机号（可编辑）+ 输入验证码/密码
+                    // 第二步：展示手机号（可编辑）+ 输入验证码
                     PhoneNumberDisplay(
                         phone = phone,
                         onEditClick = viewModel::goToPreviousStep
@@ -479,105 +434,27 @@ fun LoginScreen(
 
                     Spacer(modifier = Modifier.height(24.dp))
 
-                    // ⭐ 修改：忘记密码模式下始终显示验证码输入框
-                    if (loginType == LoginRequest.TYPE_CODE || isForgotPasswordMode) {
-                        // 验证码登录模式或忘记密码模式
-                        OutlinedTextField(
-                            value = code,
-                            onValueChange = viewModel::updateCode,
-                            label = { Text("验证码") },
-                            modifier = Modifier.fillMaxWidth(),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            placeholder = { Text("请输入验证码") },
-                            trailingIcon = {
-                                TextButton(
-                                    onClick = viewModel::sendCode,
-                                    enabled = !isCountingDown && !isLoading && phone.isNotBlank()
-                                ) {
-                                    Text(
-                                        if (isCountingDown) "${countdownSeconds}s" else "获取验证码"
-                                    )
-                                }
-                            }
-                        )
-                    } else {
-                        // 密码登录模式
-                        OutlinedTextField(
-                            value = password,
-                            onValueChange = viewModel::updatePassword,
-                            label = { Text("密码") },
-                            modifier = Modifier.fillMaxWidth(),
-                            visualTransformation = PasswordVisualTransformation(),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                            singleLine = true,
-                            placeholder = { Text("请输入密码") }
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
-                        ) {
-                            TextButton(onClick = viewModel::toggleForgotPassword) {
+                    // ⭐ 修改：忘记密码模式下，手机号和验证码在同一页面，按钮文字为"重置密码"
+                    // 验证码输入框
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = viewModel::updateCode,
+                        label = { Text("验证码") },
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        placeholder = { Text("请输入验证码") },
+                        trailingIcon = {
+                            TextButton(
+                                onClick = viewModel::sendCode,
+                                enabled = !isCountingDown && !isLoading && phone.isNotBlank()
+                            ) {
                                 Text(
-                                    text = "忘记密码？",
-                                    color = MaterialTheme.colorScheme.primary,
-                                    style = MaterialTheme.typography.bodySmall
+                                    if (isCountingDown) "${countdownSeconds}s" else "获取验证码"
                                 )
                             }
                         }
-                    }
-                    
-                    // ⭐ 修改：忘记密码模式：额外显示新密码和确认密码输入框
-                    if (isForgotPasswordMode) {
-                        Spacer(modifier = Modifier.height(16.dp))
-                        
-                        // 新密码输入框
-                        OutlinedTextField(
-                            value = password,
-                            onValueChange = viewModel::updatePassword,
-                            label = { Text("新密码*") },
-                            modifier = Modifier.fillMaxWidth(),
-                            visualTransformation = PasswordVisualTransformation(),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                            singleLine = true,
-                            placeholder = { Text("请输入新密码") }
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Text(
-                            text = "密码要求：至少 8 位，包含字母和特殊符号",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-
-                        Spacer(modifier = Modifier.height(16.dp))
-                        
-                        // 确认新密码输入框
-                        OutlinedTextField(
-                            value = confirmPassword,
-                            onValueChange = viewModel::updateConfirmPassword,
-                            label = { Text("确认新密码*") },
-                            modifier = Modifier.fillMaxWidth(),
-                            visualTransformation = PasswordVisualTransformation(),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                            singleLine = true,
-                            placeholder = { Text("请再次输入新密码") },
-                            isError = password.isNotBlank() && confirmPassword.isNotBlank() && password != confirmPassword
-                        )
-                        
-                        if (password.isNotBlank() && confirmPassword.isNotBlank() && password != confirmPassword) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "两次输入的密码不一致",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
+                    )
 
                     Spacer(modifier = Modifier.height(16.dp))
 
@@ -590,65 +467,183 @@ fun LoginScreen(
                         Spacer(modifier = Modifier.height(8.dp))
                     }
 
-                    // 登录 / 下一步按钮
+                    // 重置密码按钮
                     Button(
                         onClick = viewModel::goToNextStep,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(48.dp),
                         enabled = when {
-                            // ⭐ 修改：忘记密码模式下需要验证码 + 新密码 + 确认密码
-                            isForgotPasswordMode -> !isLoading && code.isNotBlank() && phone.isNotBlank() && 
-                                                    password.isNotBlank() && confirmPassword.isNotBlank() && 
-                                                    password == confirmPassword && agreeTerms
-                            loginType == LoginRequest.TYPE_CODE -> !isLoading && code.isNotBlank() && phone.isNotBlank() && agreeTerms
+                            // ⭐ 修改：忘记密码模式和验证码登录都需要验证码
+                            isForgotPasswordMode || loginType == LoginRequest.TYPE_CODE -> 
+                                !isLoading && code.isNotBlank() && phone.isNotBlank() && agreeTerms
                             else -> !isLoading && password.isNotBlank() && phone.isNotBlank() && agreeTerms
                         },
                         shape = MaterialTheme.shapes.medium
                     ) {
-                        // ⭐ 修改：根据模式和步骤显示不同文字
                         Text(
-                            text = when {
-                                isForgotPasswordMode -> "重置密码"
-                                currentStep is LoginViewModel.LoginStep.VerifyCode -> "下一步"
-                                else -> "登录"
-                            },
+                            text = if (isForgotPasswordMode) "重置密码" else "登录",
                             style = MaterialTheme.typography.titleMedium
                         )
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
+                }
 
-                    // 切换登录方式 - ⭐ 减小间距
-                    TextButton(
-                        onClick = { viewModel.toggleLoginType() },
+                is LoginViewModel.LoginStep.SetNewPassword -> {
+                    // 第三步：设置新密码（仅忘记密码模式）
+                    PhoneNumberDisplay(
+                        phone = phone,
+                        onEditClick = { viewModel.goToPreviousStep() }
+                    )
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // 验证码显示（只读）
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = {},
+                        label = { Text("验证码") },
                         modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = if (loginType == LoginRequest.TYPE_CODE) "使用密码登录" else "使用验证码登录",
-                            color = MaterialTheme.colorScheme.primary,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
+                        enabled = false,
+                        singleLine = true
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // 新密码输入框
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = viewModel::updatePassword,
+                        label = { Text("新密码*") },
+                        modifier = Modifier.fillMaxWidth(),
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        singleLine = true,
+                        placeholder = { Text("请输入新密码") },
+                        isError = password.isNotBlank() && !viewModel.isValidPassword(password)
+                    )
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // 注册入口（仅非忘记密码模式显示）- ⭐ 减小间距
-                    if (!isForgotPasswordMode) {
-                        TextButton(
-                            onClick = { viewModel.toggleMode() },
-                            modifier = Modifier.fillMaxWidth(),
-                            contentPadding = PaddingValues(vertical = 4.dp)
-                        ) {
-                            Text(
-                                text = "注册新账号",
-                                color = MaterialTheme.colorScheme.primary,
-                                style = MaterialTheme.typography.bodyMedium
-                            )
+                    // ⭐ 新增：实时密码验证反馈
+                    if (password.isNotBlank()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            // 长度检查
+                            val hasMinLength = password.length >= 10
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = if (hasMinLength) Icons.Default.Check else Icons.Default.Close,
+                                    contentDescription = null,
+                                    tint = if (hasMinLength) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "至少 10 位",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (hasMinLength) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                                )
+                            }
+                            
+                            // 字母检查
+                            val hasLetter = password.any { it.isLetter() }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = if (hasLetter) Icons.Default.Check else Icons.Default.Close,
+                                    contentDescription = null,
+                                    tint = if (hasLetter) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "包含字母",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (hasLetter) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                                )
+                            }
+                            
+                            // 特殊符号检查
+                            val hasSymbol = password.any { !it.isLetterOrDigit() }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = if (hasSymbol) Icons.Default.Check else Icons.Default.Close,
+                                    contentDescription = null,
+                                    tint = if (hasSymbol) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "包含特殊符号",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (hasSymbol) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                                )
+                            }
                         }
+                    } else {
+                        Text(
+                            text = "密码要求：至少 10 位，必须包含字母和特殊符号",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // 确认新密码输入框
+                    OutlinedTextField(
+                        value = confirmPassword,
+                        onValueChange = viewModel::updateConfirmPassword,
+                        label = { Text("确认新密码*") },
+                        modifier = Modifier.fillMaxWidth(),
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        singleLine = true,
+                        placeholder = { Text("请再次输入新密码") },
+                        isError = password.isNotBlank() && confirmPassword.isNotBlank() && password != confirmPassword
+                    )
+
+                    if (password.isNotBlank() && confirmPassword.isNotBlank() && password != confirmPassword) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "两次输入的密码不一致",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(40.dp))  // ⭐ 修改：增加间距到 40dp
+
+                    errorMessage?.let {
+                        Text(
+                            text = it,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
                         Spacer(modifier = Modifier.height(8.dp))
                     }
+
+                    // 确认重置按钮
+                    Button(
+                        onClick = viewModel::goToNextStep,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                        enabled = !isLoading && 
+                                  password.isNotBlank() && 
+                                  confirmPassword.isNotBlank() && 
+                                  password == confirmPassword && 
+                                  viewModel.isValidPassword(password) &&
+                                  agreeTerms,
+                        shape = MaterialTheme.shapes.medium
+                    ) {
+                        Text(
+                            text = "确认重置",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
 
                     // 返回按钮
                     OutlinedButton(
@@ -700,7 +695,7 @@ fun LoginScreen(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = "密码要求：至少 8 位，包含字母和特殊符号",
+                        text = "密码要求：至少 10 位，必须包含字母和特殊符号",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

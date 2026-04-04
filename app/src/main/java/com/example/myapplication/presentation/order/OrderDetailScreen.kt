@@ -1,6 +1,8 @@
 package com.example.myapplication.presentation.order
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,7 +25,8 @@ fun getStatusText(status: Int): String {
 @Composable
 fun OrderDetailScreen(
     orderId: Long,
-    viewModel: OrderDetailViewModel = hiltViewModel()
+    viewModel: OrderDetailViewModel = hiltViewModel(),
+    onBackClick: () -> Unit = {}  // ⭐ 新增：返回键回调
 ) {
     val order by viewModel.order.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
@@ -33,38 +36,55 @@ fun OrderDetailScreen(
         viewModel.loadOrder(orderId)
     }
 
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        if (isLoading) {
-            CircularProgressIndicator()
-        } else if (errorMessage != null) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("出错了：$errorMessage")
-                Button(onClick = { viewModel.loadOrder(orderId) }) {
-                    Text("重试")
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("订单详情") },
+                navigationIcon = {
+                    IconButton(onClick = onBackClick) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                    }
                 }
-            }
-        } else if (order != null) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
-            ) {
-                Text("订单详情", style = MaterialTheme.typography.headlineMedium)
-                Spacer(modifier = Modifier.height(16.dp))
-                Text("订单号：${order!!.orderNo}")
-                Text("目的地：${order!!.getAddress() ?: order!!.poiAddress}")  // ⭐ 使用兼容方法
-                Text("预估价格：${order!!.estimatedPrice}元")
-                Text("状态：${getStatusText(order!!.status)}") // ⭐ 根据状态码显示文字
-                Spacer(modifier = Modifier.height(16.dp))
-                if (order!!.status == 0) { // ⭐ 修改：使用 Int 类型，0=pending
-                    Button(
-                        onClick = { viewModel.cancelOrder(orderId) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("取消订单")
+            )
+        }
+    ) { paddingValues ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues),
+            contentAlignment = Alignment.Center
+        ) {
+            if (isLoading) {
+                CircularProgressIndicator()
+            } else if (errorMessage != null) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("出错了：$errorMessage")
+                    Button(onClick = { viewModel.loadOrder(orderId) }) {
+                        Text("重试")
+                    }
+                }
+            } else if (order != null) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    Text("订单号：${order!!.orderNo}", style = MaterialTheme.typography.bodyLarge)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    // ⭐ 修复：使用正确的字段名
+                    Text("目的地：${order!!.getAddress() ?: "未知"}", style = MaterialTheme.typography.bodyLarge)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("预估价格：${order!!.estimatePrice ?: 0.0}元", style = MaterialTheme.typography.bodyLarge)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("状态：${getStatusText(order!!.status)}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.height(24.dp))
+                    if (order!!.status == 0) {
+                        Button(
+                            onClick = { viewModel.cancelOrder(orderId) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("取消订单")
+                        }
                     }
                 }
             }

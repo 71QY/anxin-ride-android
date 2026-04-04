@@ -84,9 +84,10 @@ fun OrderCard(
                 text = "订单号：${order.orderNo}",
                 style = MaterialTheme.typography.titleMedium
             )
-            Text("目的地：${order.poiAddress}")
-            Text("状态：${order.status}")
-            Text("预估价格：${order.estimatedPrice}元")
+            // ⭐ 修复：使用 poiName 或 destAddress，而不是不存在的 poiAddress
+            Text("目的地：${order.poiName ?: order.destAddress ?: "未知"}")
+            Text("状态：${getStatusText(order.status)}")
+            Text("预估价格：${order.estimatePrice ?: 0.0}元")
         }
     }
 }

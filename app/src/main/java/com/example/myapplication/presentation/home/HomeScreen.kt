@@ -21,7 +21,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.ListItem
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -46,7 +48,6 @@ import kotlinx.coroutines.delay
 fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
     onNavigateToProfile: () -> Unit,
-    onStartFloatService: () -> Unit,
     onRequestLocationPermission: () -> Unit,
     onNavigateToOrder: (String) -> Unit,
     onNavigateToChat: () -> Unit = {}
@@ -55,18 +56,16 @@ fun HomeScreen(
     val showPoiDetailDialog by viewModel.showPoiDetailDialog.collectAsStateWithLifecycle()
     val poiDetail by viewModel.poiDetail.collectAsStateWithLifecycle()
     val selectedPoiForMap by viewModel.selectedPoiForMap.collectAsStateWithLifecycle()
-    val currentLocationState by viewModel.currentLocation.collectAsStateWithLifecycle()
     
     val locationPermissionState = rememberPermissionState(permission = android.Manifest.permission.ACCESS_FINE_LOCATION)
+    val audioPermissionState = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
+    
+    var showMapHint by remember { mutableStateOf(true) }
     
     val context = LocalContext.current
     
-    LaunchedEffect(locationPermissionState.status) {
-        if (locationPermissionState.status == PermissionStatus.Granted) {
-            Log.d("HomeScreen", "✅ 定位权限已授予，请求定位（仅一次）")
-            viewModel.startLocation(context)
-        }
-    }
+    // ⭐ 修改：使用高德地图自带定位，不需要手动启动
+    var hasRequestedLocation by remember { mutableStateOf(false) }
     
     val isGeocoding by viewModel.isGeocoding.collectAsStateWithLifecycle()
     val geocodeError by viewModel.geocodeError.collectAsStateWithLifecycle()
@@ -75,6 +74,7 @@ fun HomeScreen(
     val isSearching by viewModel.isSearching.collectAsStateWithLifecycle()
     val clickedLocation by viewModel.clickedLocation.collectAsStateWithLifecycle()
     val isListening by viewModel.isListening.collectAsStateWithLifecycle()
+    val voiceText by viewModel.voiceText.collectAsStateWithLifecycle()  // ⭐ 新增
     val currentLocation by viewModel.currentLocation.collectAsStateWithLifecycle()
     val locationAccuracy by viewModel.locationAccuracy.collectAsStateWithLifecycle()
     val orderState by viewModel.orderState.collectAsStateWithLifecycle()
@@ -83,12 +83,13 @@ fun HomeScreen(
     var showPoiDialog by remember { mutableStateOf(false) }
     var isNationwideSearch by remember { mutableStateOf(false) }
     var showAgentSheet by remember { mutableStateOf(false) }
+    
+    // ⭐ 新增：方言选择对话框
+    var showDialectDialog by remember { mutableStateOf(false) }
+    val currentAccent by viewModel.currentAccent.collectAsStateWithLifecycle()
+    val currentLanguage by viewModel.currentLanguage.collectAsStateWithLifecycle()
 
     val aMapState = remember { mutableStateOf<AMap?>(null) }
-
-    val audioPermissionState = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
-
-    var showMapHint by remember { mutableStateOf(true) }
     
     // ⭐ 新增：底部面板高度状态，支持拖动调整
     var bottomPanelHeight by remember { mutableStateOf(250.dp) }
@@ -105,19 +106,9 @@ fun HomeScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
-        if (!locationPermissionState.status.isGranted) {
-            locationPermissionState.launchPermissionRequest()
-        }
-        
-        delay(5000)
-        showMapHint = false
-    }
-
     LaunchedEffect(locationPermissionState.status.isGranted) {
         if (locationPermissionState.status.isGranted) {
-            Log.d("HomeScreen", "✅ 权限状态变化：已授予，但不再重复定位")
-            // ⭐ 修改：移除重复的定位调用，因为上面已经处理了
+            Log.d("HomeScreen", "✅ 权限状态变化：已授予")
         }
     }
     
@@ -147,14 +138,25 @@ fun HomeScreen(
         val aMap = aMapState.value
         clickedLocation?.let {
             Log.d("HomeScreen", "在地图上标记位置")
+            // ⭐ 高德地图自带定位，不需要手动画点
             aMap?.clear()
+            
+            // 添加点击位置的标记
             aMap?.addMarker(com.amap.api.maps.model.MarkerOptions().position(it))
             aMap?.animateCamera(CameraUpdateFactory.newLatLngZoom(it, 17f))
         }
     }
 
+    // ⭐ 修复：监听定位变化，首次定位成功后自动移动相机
+    LaunchedEffect(currentLocation) {
+        Log.d("HomeScreen", "🛰️ 定位状态检查: loc=$currentLocation")
+        currentLocation?.let {
+            Log.d("HomeScreen", "✅ 位置更新，移动相机到当前位置: lat=${it.latitude}, lng=${it.longitude}")
+            aMapState.value?.animateCamera(CameraUpdateFactory.newLatLngZoom(it, 17f))
+        }
+    }
+
     LaunchedEffect(selectedPoiForMap) {
-        Log.d("HomeScreen", "=== selectedPoiForMap 变化 ===")
         val aMap = aMapState.value
         val poi = selectedPoiForMap
         Log.d("HomeScreen", "选中的 POI: $poi")
@@ -174,6 +176,10 @@ fun HomeScreen(
                 val latLng = LatLng(latitude, longitude)
                 Log.d("HomeScreen", "POI 坐标：lat=$latitude, lng=$longitude, name=$name")
                 aMap?.animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 17f))
+                
+                // ⭐ 高德地图自带定位，不需要手动画点
+                aMap?.clear()
+                
                 aMap?.addMarker(
                     com.amap.api.maps.model.MarkerOptions()
                         .position(latLng)
@@ -186,17 +192,6 @@ fun HomeScreen(
         }
     }
 
-    // ⭐ 新增：监听当前位置变化，在地图上显示蓝色定位图标
-    LaunchedEffect(currentLocation) {
-        Log.d("HomeScreen", "=== currentLocation 变化 ===")
-        Log.d("HomeScreen", "当前位置：$currentLocation")
-        currentLocation?.let {
-            Log.d("HomeScreen", "📍 位置更新：lat=${it.latitude}, lng=${it.longitude}")
-            // ⭐ 高德地图会自动显示蓝色定位图标（通过 setMyLocationEnabled）
-            // 这里只需要移动相机到当前位置即可
-            aMapState.value?.animateCamera(CameraUpdateFactory.newLatLngZoom(it, 17f))
-        }
-    }
 
     LaunchedEffect(orderState) {
         when (val currentState = orderState) {
@@ -206,7 +201,7 @@ fun HomeScreen(
                 Log.d("HomeScreen", "订单 ID: ${order.id}")
                 Log.d("HomeScreen", "订单号：${order.orderNo}")
                 Log.d("HomeScreen", "目的地：${order.poiName}")
-                Log.d("HomeScreen", "预估价格：¥${order.estimatedPrice}")
+                Log.d("HomeScreen", "预估价格：¥${order.estimatePrice}")
                 Log.d("HomeScreen", "跳转到订单详情：${order.id}")
                 onNavigateToOrder(order.id.toString())
                 viewModel.resetOrderState()
@@ -412,6 +407,8 @@ fun HomeScreen(
                 onMapReady = { aMap ->
                     Log.d("HomeScreen", "=== 地图初始化完成 ===")
                     aMapState.value = aMap
+                    
+                    // ⭐ 启用高德地图自带定位（上一个版本的实现）
                     val style = MyLocationStyle()
                     style.myLocationType(MyLocationStyle.LOCATION_TYPE_SHOW)
                     style.radiusFillColor(android.graphics.Color.argb(80, 0, 0, 255))
@@ -419,10 +416,11 @@ fun HomeScreen(
                     style.strokeWidth(2f)
                     aMap.setMyLocationStyle(style)
                     aMap.isMyLocationEnabled = true
-                    Log.d("HomeScreen", "启用我的位置图层")
+                    Log.d("HomeScreen", "✅ 启用高德地图自带定位")
 
+                    // ⭐ 监听位置变化并更新 ViewModel
                     aMap.setOnMyLocationChangeListener { location ->
-                        Log.d("HomeScreen", "位置变化：lat=${location.latitude}, lng=${location.longitude}")
+                        Log.d("HomeScreen", "📍 位置变化：lat=${location.latitude}, lng=${location.longitude}")
                         viewModel.updateCurrentLocation(location.latitude, location.longitude)
                     }
                 },
@@ -458,21 +456,32 @@ fun HomeScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // ⭐ 智能体对话按钮 - 新增
-                FloatingActionButton(
-                    onClick = {
-                        Log.d("HomeScreen", "=== 点击智能体对话按钮 ===")
-                        onNavigateToChat()
-                    },
-                    modifier = Modifier.size(48.dp),
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    elevation = FloatingActionButtonDefaults.elevation(6.dp)
+                // ⭐ 智能体对话按钮
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Chat,
-                        contentDescription = "智能体对话",
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp)
+                    FloatingActionButton(
+                        onClick = {
+                            Log.d("HomeScreen", "=== 点击智能体对话按钮 ===")
+                            onNavigateToChat()
+                        },
+                        modifier = Modifier.size(48.dp),
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        elevation = FloatingActionButtonDefaults.elevation(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Chat,
+                            contentDescription = "智能体对话",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Text(
+                        text = "智能体",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Medium
                     )
                 }
                 
@@ -486,7 +495,6 @@ fun HomeScreen(
                             )
                         } ?: run {
                             Toast.makeText(context, "🛰️ 正在获取位置...", Toast.LENGTH_SHORT).show()
-                            viewModel.startLocation(context)
                         }
                     },
                     modifier = Modifier.size(48.dp),
@@ -496,7 +504,7 @@ fun HomeScreen(
                     Icon(
                         Icons.Default.MyLocation,
                         contentDescription = "定位",
-                        tint = if (currentLocation != null) Color.Green else Color.Gray,
+                        tint = if (currentLocation != null) MaterialTheme.colorScheme.primary else Color.Gray,
                         modifier = Modifier.size(24.dp)
                     )
                 }
@@ -679,6 +687,18 @@ fun HomeScreen(
                                     tint = if (isListening) Color.Red else MaterialTheme.colorScheme.primary
                                 )
                             }
+                            
+                            // ⭐ 新增：方言选择按钮
+                            IconButton(
+                                onClick = { showDialectDialog = true },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Language,
+                                    contentDescription = "选择方言",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
                         }
                     }
                 }
@@ -759,11 +779,90 @@ fun HomeScreen(
                 ) {
                     Text("正在聆听...", color = Color.White, fontSize = 20.sp)
                     Spacer(modifier = Modifier.height(16.dp))
+                    
+                    // ⭐ 新增：实时显示语音识别结果
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth(0.8f)
+                            .padding(horizontal = 16.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color.White.copy(alpha = 0.95f)
+                        )
+                    ) {
+                        Text(
+                            text = if (voiceText.isNotBlank()) voiceText else "请说话...",
+                            fontSize = 18.sp,
+                            color = if (voiceText.isNotBlank()) Color.Black else Color.Gray,
+                            modifier = Modifier.padding(16.dp),
+                            maxLines = 3
+                        )
+                    }
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
                     Button(onClick = { viewModel.stopVoiceInput() }) {
                         Text("结束")
                     }
                 }
             }
+        }
+        
+        // ⭐ 新增：方言选择对话框
+        if (showDialectDialog) {
+            AlertDialog(
+                onDismissRequest = { showDialectDialog = false },
+                title = { Text("选择方言") },
+                text = {
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 400.dp)
+                    ) {
+                        items(viewModel.supportedDialects) { dialect ->
+                            val isSelected = currentAccent == dialect.accent
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        viewModel.setDialect(dialect.language, dialect.accent)
+                                        showDialectDialog = false
+                                        Toast.makeText(context, "已切换到${dialect.name}", Toast.LENGTH_SHORT).show()
+                                    }
+                                    .padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = dialect.name,
+                                        fontSize = 16.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Black
+                                    )
+                                    if (isSelected) {
+                                        Text(
+                                            text = "✓ 当前选择",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Default.CheckCircle,
+                                        contentDescription = "已选择",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                            }
+                            Divider()
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showDialectDialog = false }) {
+                        Text("关闭")
+                    }
+                }
+            )
         }
     }
 }

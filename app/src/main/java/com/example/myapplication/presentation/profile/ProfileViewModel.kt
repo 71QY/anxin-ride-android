@@ -102,17 +102,44 @@ class ProfileViewModel @Inject constructor(
         }
     }
 
-    // ⭐ 修改：密码格式验证 - 10 位数，必须包含英文字符，可以包含其他字符
+    // ⭐ 修改：密码格式验证 - 至少 10 位数，必须包含字母和特殊符号
     fun isValidPassword(password: String): Boolean {
-        if (password.length != 10) return false
+        if (password.length < 10) return false
         val hasLetter = password.any { it.isLetter() }
-        return hasLetter
+        val hasSymbol = password.any { !it.isLetterOrDigit() }
+        return hasLetter && hasSymbol
     }
 
     // 身份证格式验证
     fun isValidIdCard(idCard: String): Boolean {
         val regex = Regex("^[1-9]\\d{5}(18|19|20)?\\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\\d|3[01])\\d{3}(\\d|X|x)$")
         return regex.matches(idCard)
+    }
+
+    /**
+     * 等待 Token 就绪（最多尝试 5 次，每次间隔 300ms）
+     */
+    private suspend fun waitForToken(): String? {
+        var token = tokenManager.getTokenSync()
+        var attempts = 0
+        val maxAttempts = 5
+        
+        Log.d("ProfileViewModel", "第 1 次获取 Token: ${if (token != null) "exists" else "null"}")
+        
+        while (token.isNullOrBlank() && attempts < maxAttempts) {
+            delay(300)
+            token = tokenManager.getTokenSync()
+            attempts++
+            Log.d("ProfileViewModel", "等待 Token，尝试 $attempts/$maxAttempts, token=${if (token != null) "exists" else "null"}")
+        }
+        
+        if (token.isNullOrBlank()) {
+            Log.e("ProfileViewModel", "❌ Token 为空")
+            return null
+        }
+        
+        Log.d("ProfileViewModel", "✅ 获取到 Token，长度：${token.length}")
+        return token
     }
 
     /**
@@ -124,28 +151,14 @@ class ProfileViewModel @Inject constructor(
             _isProfileLoading.value = true
             _errorMessage.value = null
             try {
-                // ⭐ 修改：多次尝试获取 Token
-                var token = tokenManager.getTokenSync()
-                var attempts = 0
-                val maxAttempts = 5
-                
-                Log.d("ProfileViewModel", "第 1 次获取 Token: ${if (token != null) "exists" else "null"}")
-                
-                while (token.isNullOrBlank() && attempts < maxAttempts) {
-                    delay(300)  // 每次等待 300ms
-                    token = tokenManager.getTokenSync()
-                    attempts++
-                    Log.d("ProfileViewModel", "等待 Token，尝试 $attempts/$maxAttempts, token=${if (token != null) "exists" else "null"}")
-                }
-                
+                // ⭐ 修改：使用封装的方法等待 Token
+                val token = waitForToken()
                 if (token.isNullOrBlank()) {
-                    Log.e("ProfileViewModel", "❌ Token 为空，无法加载用户信息")
                     _errorMessage.value = "请先登录"
                     _isProfileLoading.value = false
                     return@launch
                 }
                 
-                Log.d("ProfileViewModel", "✅ 获取到 Token，长度：${token.length}")
                 Log.d("ProfileViewModel", "开始调用 getUserProfile API")
                 
                 val response = api.getUserProfile()
@@ -204,28 +217,14 @@ class ProfileViewModel @Inject constructor(
             Log.d("ProfileViewModel", "=== loadEmergencyContacts 开始执行 ===")
             _isContactsLoading.value = true
             try {
-                // ⭐ 修改：多次尝试获取 Token
-                var token = tokenManager.getTokenSync()
-                var attempts = 0
-                val maxAttempts = 5
-                
-                Log.d("ProfileViewModel", "第 1 次获取 Token: ${if (token != null) "exists" else "null"}")
-                
-                while (token.isNullOrBlank() && attempts < maxAttempts) {
-                    delay(300)  // 每次等待 300ms
-                    token = tokenManager.getTokenSync()
-                    attempts++
-                    Log.d("ProfileViewModel", "等待 Token，尝试 $attempts/$maxAttempts, token=${if (token != null) "exists" else "null"}")
-                }
-                
+                // ⭐ 修改：使用封装的方法等待 Token
+                val token = waitForToken()
                 if (token.isNullOrBlank()) {
-                    Log.e("ProfileViewModel", "❌ Token 为空，无法加载联系人")
                     _errorMessage.value = "请先登录"
                     _isContactsLoading.value = false
                     return@launch
                 }
                 
-                Log.d("ProfileViewModel", "✅ 获取到 Token，长度：${token.length}")
                 Log.d("ProfileViewModel", "开始调用 getEmergencyContacts API")
                 
                 val response = api.getEmergencyContacts()
@@ -461,7 +460,7 @@ class ProfileViewModel @Inject constructor(
                 // ⭐ 新增：密码格式校验
                 val newPassword = newPasswordInput.value
                 if (!isValidPassword(newPassword)) {
-                    _errorMessage.value = "密码格式不正确，必须是 10 位数且包含至少一个英文字符"  // ⭐ Bug 3: 更新错误提示
+                    _errorMessage.value = "密码必须是 10 位，且包含字母和特殊符号"  // ⭐ Bug 3: 更新错误提示
                     _isOperationLoading.value = false
                     return@launch
                 }
