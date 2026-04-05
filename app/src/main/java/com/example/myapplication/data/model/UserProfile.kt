@@ -12,6 +12,5 @@ data class UserProfile(
     @SerialName("avatar") val avatar: String? = null,
     @SerialName("realName") val realName: String? = null,
     @SerialName("idCard") val idCard: String? = null,
-    // ⭐ 修改：添加 verified 字段，默认为 0 (未认证)
     @SerialName("verified") val verified: Int = 0
 )

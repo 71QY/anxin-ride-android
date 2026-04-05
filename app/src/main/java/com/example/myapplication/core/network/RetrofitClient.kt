@@ -23,7 +23,7 @@ object RetrofitClient {
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
-        .retryOnConnectionFailure(true)  // ⭐ 启用连接失败重试
+        .retryOnConnectionFailure(true)
         .build()
 
     val instance: ApiService by lazy {

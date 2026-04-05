@@ -6,7 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll  // ⭐ 新增：导入垂直滚动
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -44,21 +44,21 @@ fun LoginScreen(
     val loginType by viewModel.loginType.collectAsState()
     val agreeTerms by viewModel.agreeTerms.collectAsState()
 
-    Log.d("LoginScreen", "当前状态：loginSuccess=$loginSuccess, currentStep=$currentStep")
+    Log.d("LoginScreen", "Current state: loginSuccess=$loginSuccess, currentStep=$currentStep")
 
     // 登录成功弹窗
     if (showLoginDialog) {
         AlertDialog(
             onDismissRequest = viewModel::dismissLoginDialog,
-            title = { Text("登录成功") },
-            text = { Text("欢迎回来！") },
+            title = { Text("Login Successful") },
+            text = { Text("Welcome back!") },
             confirmButton = {
                 Button(onClick = {
                     viewModel.dismissLoginDialog()
                     onRequestFloatPermission()
                     onLoginSuccess()
                 }) {
-                    Text("确定")
+                    Text("OK")
                 }
             }
         )
@@ -68,8 +68,8 @@ fun LoginScreen(
     if (showCodeSuccessDialog) {
         AlertDialog(
             onDismissRequest = viewModel::dismissCodeSuccessDialog,
-            title = { Text("验证码已发送") },
-            text = { Text("验证码已发送到您的手机，请注意查收") },
+            title = { Text("Verification Code Sent") },
+            text = { Text("Verification code has been sent to your phone. Please check.") },
             confirmButton = {
                 Button(onClick = viewModel::dismissCodeSuccessDialog) {
                     Text("确定")
@@ -81,23 +81,21 @@ fun LoginScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                // ⭐ 修改：根据模式动态设置标题
                 title = { 
                     Text(
                         text = when {
-                            isForgotPasswordMode -> "重置密码"
-                            isRegisterMode -> "注册"
-                            else -> "登录"
+                            isForgotPasswordMode -> "Reset Password"
+                            isRegisterMode -> "Register"
+                            else -> "Login"
                         }
                     )
                 },
                 navigationIcon = {
-                    // ⭐ 修改：注册模式下始终显示返回按钮，或者在非第一步时显示
-                    if (isRegisterMode || currentStep !is LoginViewModel.LoginStep.PhoneInput) {
+            if (isRegisterMode || currentStep !is LoginViewModel.LoginStep.PhoneInput) {
                         IconButton(onClick = viewModel::goToPreviousStep) {
                             Icon(
                                 Icons.Default.ArrowBack,
-                                contentDescription = "返回"
+                                contentDescription = "Back"
                             )
                         }
                     }
@@ -105,23 +103,20 @@ fun LoginScreen(
             )
         }
     ) { paddingValues ->
-        // ⭐ 修改：添加 verticalScroll 支持，避免小屏幕内容被截断
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
                 .padding(horizontal = 24.dp, vertical = 16.dp)
-                .verticalScroll(rememberScrollState()),  // ⭐ 新增：启用垂直滚动
+                .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // ⭐ 顶部间距使用百分比，避免固定值
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Logo 区域 - ⭐ 使用相对比例而非固定尺寸
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(0.5f)  // ⭐ Logo 宽度占屏幕 50%
-                    .aspectRatio(1f)  // ⭐ 保持正方形比例
+                    .fillMaxWidth(0.5f)
+                    .aspectRatio(1f)
                     .padding(8.dp)
             ) {
                 Icon(
@@ -138,7 +133,6 @@ fun LoginScreen(
                 color = MaterialTheme.colorScheme.primary
             )
 
-            // ⭐ 使用 flex 权重代替固定间距
             Spacer(modifier = Modifier.weight(0.3f, fill = false))
 
             // 根据当前步骤显示不同内容

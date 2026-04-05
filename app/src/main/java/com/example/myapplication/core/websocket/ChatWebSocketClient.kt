@@ -63,25 +63,25 @@ class ChatWebSocketClient @Inject constructor() {
             .addHeader("X-Session-ID", sessionId)
             .build()
 
-        Log.d("WebSocket", "尝试连接：$url")
-        Log.d("WebSocket", "Token: ${token.take(20)}...")
+        Log.d("WebSocket", "Attempting connection")
+        Log.d("WebSocket", "Token: [HIDDEN]")
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 super.onOpen(webSocket, response)
                 isConnected = true
                 reconnectAttempts = 0
-                Log.d("WebSocket", "连接成功：$url")
+                Log.d("WebSocket", "Connection established")
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 super.onMessage(webSocket, text)
-                Log.d("WebSocket", "📥 收到原始消息 (${text.length} 字符): ${text.take(100)}...")
+                Log.d("WebSocket", "Received message (${text.length} chars)")
                 
                 val result = _messages.trySend(text)
                 if (result.isFailure) {
-                    Log.e("WebSocket", "❌ 消息发送到 Channel 失败：${result.exceptionOrNull()?.message}")
+                    Log.e("WebSocket", "Failed to send message to Channel: ${result.exceptionOrNull()?.message}")
                 } else {
-                    Log.d("WebSocket", "✅ 消息已发送到 Channel")
+                    Log.d("WebSocket", "Message sent to Channel")
                 }
             }
 
@@ -89,43 +89,41 @@ class ChatWebSocketClient @Inject constructor() {
                 super.onFailure(webSocket, t, response)
                 isConnected = false
                 
-                // ⭐ 修复：详细的错误日志，帮助诊断 Java 11 vs Java 17 兼容性问题
                 val errorMsg = buildString {
-                    append("连接失败：${t.message}")
-                    append("\n异常类型：${t.javaClass.simpleName}")
+                    append("Connection failed: ${t.message}")
+                    append("\nException type: ${t.javaClass.simpleName}")
                     response?.let {
-                        append("\nHTTP 状态码：${it.code}")
-                        append("\n响应头：${it.headers}")
+                        append("\nHTTP status code: ${it.code}")
+                        append("\nResponse headers: ${it.headers}")
                     }
-                    append("\n堆栈跟踪：${t.stackTraceToString()}")
+                    append("\nStack trace: ${t.stackTraceToString()}")
                 }
                 Log.e("WebSocket", errorMsg, t)
                 
-                // ⭐ 新增：根据异常类型提供具体的解决建议
                 when (t) {
                     is java.net.SocketTimeoutException -> {
-                        Log.e("WebSocket", "⚠️ 连接超时，请检查：1.后端服务是否运行 2.防火墙设置 3.网络连通性")
+                        Log.e("WebSocket", "Connection timeout, check: 1.Backend service running 2.Firewall settings 3.Network connectivity")
                     }
                     is java.net.ConnectException -> {
-                        Log.e("WebSocket", "⚠️ 无法连接到服务器，请确认后端 IP 和端口是否正确")
+                        Log.e("WebSocket", "Cannot connect to server, verify backend IP and port")
                     }
                     is javax.net.ssl.SSLHandshakeException -> {
-                        Log.e("WebSocket", "⚠️ SSL 握手失败，检查是否需要 HTTPS 而不是 WS")
+                        Log.e("WebSocket", "SSL handshake failed, check if HTTPS is required instead of WS")
                     }
                     else -> {
-                        Log.e("WebSocket", "⚠️ 未知错误，查看上方详细日志")
+                        Log.e("WebSocket", "Unknown error, see detailed log above")
                     }
                 }
 
                 if (reconnectAttempts < maxReconnectAttempts) {
                     val delayTime = backoffTimes.getOrElse(reconnectAttempts) { 16000L }
                     reconnectAttempts++
-                    Log.d("WebSocket", "${delayTime}ms 后尝试重连 ${reconnectAttempts}/${maxReconnectAttempts}")
+                    Log.d("WebSocket", "Reconnecting in ${delayTime}ms ${reconnectAttempts}/${maxReconnectAttempts}")
 
                     scope.launch {
                         delay(delayTime)
                         if (isActive) {
-                            Log.d("WebSocket", "开始重连...")
+                            Log.d("WebSocket", "Starting reconnection...")
                             sessionId?.let { sid ->
                                 token?.let { tk ->
                                     connect(sid, tk)
@@ -134,18 +132,18 @@ class ChatWebSocketClient @Inject constructor() {
                         }
                     }
                 } else {
-                    Log.e("WebSocket", "重连失败，已达到最大次数")
+                    Log.e("WebSocket", "Reconnection failed, max attempts reached")
                 }
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 super.onClosed(webSocket, code, reason)
                 isConnected = false
-                Log.d("WebSocket", "连接关闭：code=$code, reason=$reason")
+                Log.d("WebSocket", "Connection closed: code=$code, reason=$reason")
                 
                 // 异常关闭时尝试重连
                 if (code != 1000 && code != 1001) {
-                    Log.w("WebSocket", "异常关闭 code=$code，尝试重连")
+                    Log.w("WebSocket", "Abnormal close code=$code, attempting reconnection")
                     if (reconnectAttempts < maxReconnectAttempts) {
                         reconnectAttempts++
                         scope.launch {
@@ -153,7 +151,7 @@ class ChatWebSocketClient @Inject constructor() {
                             if (isActive) {
                                 sessionId?.let { sid ->
                                     token?.let { tk ->
-                                        Log.d("WebSocket", "异常关闭后重连：${reconnectAttempts}/${maxReconnectAttempts}")
+                                        Log.d("WebSocket", "Reconnecting after abnormal close: ${reconnectAttempts}/${maxReconnectAttempts}")
                                         connect(sid, tk)
                                     }
                                 }
@@ -161,7 +159,7 @@ class ChatWebSocketClient @Inject constructor() {
                         }
                     }
                 } else {
-                    Log.d("WebSocket", "正常关闭，不重连")
+                    Log.d("WebSocket", "Normal close, no reconnection")
                 }
             }
         })
@@ -174,20 +172,19 @@ class ChatWebSocketClient @Inject constructor() {
 
     fun sendRaw(json: String) {
         if (!isConnected) {
-            Log.e("WebSocket", "发送失败：未连接")
+            Log.e("WebSocket", "Send failed: not connected")
             return
         }
 
         try {
             val sent = webSocket?.send(json)
             if (sent == false) {
-                Log.e("WebSocket", "发送失败：缓冲区已满")
+                Log.e("WebSocket", "Send failed: buffer full")
             } else {
-                Log.d("WebSocket", "发送消息：$json")
+                Log.d("WebSocket", "Sending message")
             }
         } catch (e: Exception) {
-            Log.e("WebSocket", "发送异常：${e.message}", e)
-            // ⭐ 修改：捕获异常，避免崩溃
+            Log.e("WebSocket", "Send exception: ${e.message}", e)
             isConnected = false
         }
     }
@@ -197,10 +194,9 @@ class ChatWebSocketClient @Inject constructor() {
         webSocket?.close(1000, "正常关闭")
         webSocket = null
         isConnected = false
-        Log.d("WebSocket", "已断开连接")
+        Log.d("WebSocket", "Disconnected")
     }
 
-    // ⭐ 修改：添加同步检查方法
     fun isConnected(): Boolean {
         return isConnected && webSocket != null
     }

@@ -37,55 +37,45 @@ class ProfileViewModel @Inject constructor(
     private val tokenManager: TokenManager
 ) : ViewModel() {
 
-    // 个人资料数据及加载状态
     private val _profile = MutableStateFlow<UserProfile?>(null)
     val profile: StateFlow<UserProfile?> = _profile.asStateFlow()
 
     private val _isProfileLoading = MutableStateFlow(false)
     val isProfileLoading: StateFlow<Boolean> = _isProfileLoading.asStateFlow()
 
-    // 紧急联系人列表及加载状态
     private val _contacts = MutableStateFlow<List<EmergencyContact>>(emptyList())
     val contacts: StateFlow<List<EmergencyContact>> = _contacts.asStateFlow()
 
     private val _isContactsLoading = MutableStateFlow(false)
     val isContactsLoading: StateFlow<Boolean> = _isContactsLoading.asStateFlow()
 
-    // 操作状态（添加联系人、修改昵称时的独立加载状态）
     private val _isOperationLoading = MutableStateFlow(false)
     val isOperationLoading: StateFlow<Boolean> = _isOperationLoading.asStateFlow()
 
-    // 全局错误消息
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
-    // 全局成功消息
     private val _successMessage = MutableStateFlow<String?>(null)
     val successMessage: StateFlow<String?> = _successMessage.asStateFlow()
 
-    // 发送验证码状态
     private val _isSendingCode = MutableStateFlow(false)
     val isSendingCode: StateFlow<Boolean> = _isSendingCode.asStateFlow()
 
-    // 修改昵称输入
     private val _nicknameInput = MutableStateFlow("")
     val nicknameInput: StateFlow<String> = _nicknameInput.asStateFlow()
 
-    // 修改密码输入
     private val _codeInput = MutableStateFlow("")
     val codeInput: StateFlow<String> = _codeInput.asStateFlow()
 
     private val _newPasswordInput = MutableStateFlow("")
     val newPasswordInput: StateFlow<String> = _newPasswordInput.asStateFlow()
 
-    // 实名认证输入
     private val _realNameInput = MutableStateFlow("")
     val realNameInput: StateFlow<String> = _realNameInput.asStateFlow()
 
     private val _idCardInput = MutableStateFlow("")
     val idCardInput: StateFlow<String> = _idCardInput.asStateFlow()
 
-    // 紧急联系人输入
     private val _contactNameInput = MutableStateFlow("")
     val contactNameInput: StateFlow<String> = _contactNameInput.asStateFlow()
 
@@ -94,15 +84,13 @@ class ProfileViewModel @Inject constructor(
 
     init {
         Log.d("ProfileViewModel", "init called")
-        // ⭐ 修改：延迟加载，确保 Token 已准备好
         viewModelScope.launch {
-            delay(1000)  // 增加到 1 秒延迟
+            delay(1000)
             loadProfile()
             loadEmergencyContacts()
         }
     }
 
-    // ⭐ 修改：密码格式验证 - 至少 10 位数，必须包含字母和特殊符号
     fun isValidPassword(password: String): Boolean {
         if (password.length < 10) return false
         val hasLetter = password.any { it.isLetter() }
@@ -110,76 +98,67 @@ class ProfileViewModel @Inject constructor(
         return hasLetter && hasSymbol
     }
 
-    // 身份证格式验证
     fun isValidIdCard(idCard: String): Boolean {
         val regex = Regex("^[1-9]\\d{5}(18|19|20)?\\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\\d|3[01])\\d{3}(\\d|X|x)$")
         return regex.matches(idCard)
     }
 
-    /**
-     * 等待 Token 就绪（最多尝试 5 次，每次间隔 300ms）
-     */
     private suspend fun waitForToken(): String? {
         var token = tokenManager.getTokenSync()
         var attempts = 0
         val maxAttempts = 5
         
-        Log.d("ProfileViewModel", "第 1 次获取 Token: ${if (token != null) "exists" else "null"}")
+        Log.d("ProfileViewModel", "First attempt to get Token: ${if (token != null) "exists" else "null"}")
         
         while (token.isNullOrBlank() && attempts < maxAttempts) {
             delay(300)
             token = tokenManager.getTokenSync()
             attempts++
-            Log.d("ProfileViewModel", "等待 Token，尝试 $attempts/$maxAttempts, token=${if (token != null) "exists" else "null"}")
+            Log.d("ProfileViewModel", "Waiting for Token, attempt $attempts/$maxAttempts, token=${if (token != null) "exists" else "null"}")
         }
         
         if (token.isNullOrBlank()) {
-            Log.e("ProfileViewModel", "❌ Token 为空")
+            Log.e("ProfileViewModel", "Token is empty")
             return null
         }
         
-        Log.d("ProfileViewModel", "✅ 获取到 Token，长度：${token.length}")
+        Log.d("ProfileViewModel", "Token acquired, length: ${token.length}")
         return token
     }
 
-    /**
-     * 加载个人资料
-     */
     fun loadProfile() {
         viewModelScope.launch {
-            Log.d("ProfileViewModel", "=== loadProfile 开始执行 ===")
+            Log.d("ProfileViewModel", "=== loadProfile started ===")
             _isProfileLoading.value = true
             _errorMessage.value = null
             try {
-                // ⭐ 修改：使用封装的方法等待 Token
                 val token = waitForToken()
                 if (token.isNullOrBlank()) {
-                    _errorMessage.value = "请先登录"
+                    _errorMessage.value = "Please login first"
                     _isProfileLoading.value = false
                     return@launch
                 }
                 
-                Log.d("ProfileViewModel", "开始调用 getUserProfile API")
+                Log.d("ProfileViewModel", "Calling getUserProfile API")
                 
                 val response = api.getUserProfile()
-                Log.d("ProfileViewModel", "getUserProfile 响应:")
+                Log.d("ProfileViewModel", "getUserProfile response:")
                 Log.d("ProfileViewModel", "  code=${response.code}")
                 Log.d("ProfileViewModel", "  message=${response.message}")
                 
-                // ⭐ Bug 修复：捕获可能的类型转换异常
                 val profileData = try {
                     response.data
                 } catch (e: ClassCastException) {
-                    Log.e("ProfileViewModel", "❌ 类型转换失败，data 可能不是 UserProfile 类型", e)
+                    Log.e("ProfileViewModel", "Type conversion failed, data may not be UserProfile type", e)
                     null
                 } catch (e: Exception) {
-                    Log.e("ProfileViewModel", "❌ 解析 data 失败", e)
+                    Log.e("ProfileViewModel", "Failed to parse data", e)
                     null
                 }
                 
                 if (profileData == null) {
-                    Log.e("ProfileViewModel", "❌ data 解析失败，可能 JSON 格式不匹配")
-                    _errorMessage.value = "数据格式错误，请联系管理员检查接口"
+                    Log.e("ProfileViewModel", "Data parsing failed, JSON format may not match")
+                    _errorMessage.value = "Data format error, please contact administrator"
                     _isProfileLoading.value = false
                     return@launch
                 }
@@ -187,16 +166,16 @@ class ProfileViewModel @Inject constructor(
                 if (response.isSuccess()) {
                     _profile.value = profileData
                     _nicknameInput.value = profileData?.nickname ?: ""
-                    Log.d("ProfileViewModel", "✅ 用户信息加载成功")
+                    Log.d("ProfileViewModel", "User info loaded successfully")
                     Log.d("ProfileViewModel", "  ID: ${profileData?.id}")
-                    Log.d("ProfileViewModel", "  手机号：${profileData?.phone}")
-                    Log.d("ProfileViewModel", "  昵称：${profileData?.nickname}")
-                    Log.d("ProfileViewModel", "  头像：${profileData?.avatar}")
-                    Log.d("ProfileViewModel", "  实名：${profileData?.realName}")
-                    Log.d("ProfileViewModel", "  认证状态：verified=${profileData?.verified}")
+                    Log.d("ProfileViewModel", "  Phone: ${profileData?.phone}")
+                    Log.d("ProfileViewModel", "  Nickname: ${profileData?.nickname}")
+                    Log.d("ProfileViewModel", "  Avatar: ${profileData?.avatar}")
+                    Log.d("ProfileViewModel", "  Real name: ${profileData?.realName}")
+                    Log.d("ProfileViewModel", "  Verified status: verified=${profileData?.verified}")
                 } else {
-                    Log.e("ProfileViewModel", "❌ loadProfile 失败：${response.message}")
-                    _errorMessage.value = response.message ?: "加载失败"
+                    Log.e("ProfileViewModel", "loadProfile failed: ${response.message}")
+                    _errorMessage.value = response.message ?: "Load failed"
                 }
             } catch (e: Exception) {
                 Log.e("ProfileViewModel", "❌ loadProfile 异常", e)

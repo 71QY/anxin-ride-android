@@ -13,11 +13,9 @@ class MyApplication : Application() {
         lateinit var tokenManager: TokenManager
         private const val TAG = "MyApplication"
         
-        // ⭐ 新增：用于检查 Hilt 是否初始化成功
         var isHiltInitialized = false
             private set
             
-        // ⭐ 新增：提供 context 引用
         lateinit var instance: MyApplication
             private set
     }
@@ -25,22 +23,20 @@ class MyApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         
-        Log.d(TAG, "=== MyApplication onCreate 开始 ===")
+        Log.d(TAG, "=== MyApplication onCreate started ===")
         try {
             instance = this
-            Log.d(TAG, "instance 初始化成功")
+            Log.d(TAG, "instance initialized successfully")
             
-            // ⭐ 检查 Hilt 是否已初始化
             isHiltInitialized = true
-            Log.d(TAG, "Hilt 初始化状态: $isHiltInitialized")
+            Log.d(TAG, "Hilt initialization status: $isHiltInitialized")
             
-            // 初始化 TokenManager
             tokenManager = TokenManager(this)
-            Log.d(TAG, "TokenManager 初始化成功")
+            Log.d(TAG, "TokenManager initialized successfully")
             
-            Log.d(TAG, "=== MyApplication onCreate 完成 ===")
+            Log.d(TAG, "=== MyApplication onCreate completed ===")
         } catch (e: Exception) {
-            Log.e(TAG, "MyApplication onCreate 失败", e)
+            Log.e(TAG, "MyApplication onCreate failed", e)
             isHiltInitialized = false
             throw e
         }

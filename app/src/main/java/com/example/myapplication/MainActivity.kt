@@ -56,8 +56,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.amap.api.maps.MapsInitializer
 import com.example.myapplication.presentation.chat.ChatScreen
 import com.example.myapplication.presentation.chat.ChatViewModel
-import com.example.myapplication.presentation.chat.ChatMode  // ⭐ 新增：导入聊天模式枚举
-import com.example.myapplication.presentation.chat.ChatListScreen  // ⭐ 新增：导入聊天列表界面
+import com.example.myapplication.presentation.chat.ChatMode
+import com.example.myapplication.presentation.chat.ChatListScreen
 import com.example.myapplication.presentation.home.HomeScreen
 import com.example.myapplication.presentation.home.HomeViewModel
 import com.example.myapplication.presentation.login.LoginScreen
@@ -80,37 +80,32 @@ class MainActivity : ComponentActivity() {
     
     private var hasRequestedPermission = false
     
-    // ⭐ 修改：使用 Activity 的 viewModels() 委托，Hilt 会自动提供 ViewModelFactory
     private val homeViewModel: HomeViewModel by viewModels()
     private val chatViewModel: ChatViewModel by viewModels()
     
-    // ⭐ 新增：用于监听导航到聊天界面的请求
     private var _navigateToChat by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // ⭐ 修改：同时检查 onCreate 和 intent
         val navigateToChat = intent.getBooleanExtra("navigate_to_chat", false)
         _navigateToChat = navigateToChat
 
         try {
-            // ⭐ 优化：简化初始化流程
             MapsInitializer.updatePrivacyShow(this, true, true)
             MapsInitializer.updatePrivacyAgree(this, true)
 
-            // ⭐ 修改：添加异常处理，避免讯飞 SDK 初始化失败导致崩溃
             try {
                 val iflytekAppid = BuildConfig.IFLYTEK_APPID
-                Log.d(TAG, "🎤 讯飞 AppID: $iflytekAppid")
+                Log.d(TAG, "iFlytek AppID: $iflytekAppid")
                 if (iflytekAppid.isNotBlank()) {
                     SpeechUtility.createUtility(this, SpeechConstant.APPID + "=" + iflytekAppid)
-                    Log.d(TAG, "✅ 讯飞 SDK 初始化完成（请查看后续日志确认是否成功）")
+                    Log.d(TAG, "iFlytek SDK initialized")
                 } else {
-                    Log.e(TAG, "❌ 讯飞 AppID 为空，请检查 build.gradle.kts 配置")
+                    Log.e(TAG, "iFlytek AppID is empty, check build.gradle.kts")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "❌ 讯飞 SDK 初始化异常", e)
+                Log.e(TAG, "iFlytek SDK initialization failed", e)
             }
 
             enableEdgeToEdge()
@@ -120,38 +115,34 @@ class MainActivity : ComponentActivity() {
                     val navController = rememberNavController()
                     val context = LocalContext.current
 
-                    // ⭐ 新增：应用启动时立即触发定位（在登录成功后）
                     LaunchedEffect(Unit) {
-                        Log.d("MainActivity", "🚀 应用启动，准备触发定位")
+                        Log.d("MainActivity", "App started, preparing location")
                     }
 
                     NavHost(navController = navController, startDestination = "login") {
                         composable("login") {
                             LoginScreen(
                                 onLoginSuccess = {
-                                    Log.d("MainActivity", "✅ 登录成功")
-                                    // ⭐ 修改：使用高德地图自带定位，不需要手动启动
+                                    Log.d("MainActivity", "Login successful")
                                     navController.navigate("main") {
                                         popUpTo("login") { inclusive = true }
                                     }
                                 },
                                 onRequestFloatPermission = {
-                                    // ⭐ 修改：暂时禁用悬浮窗权限请求
                                 }
                             )
                         }
                         composable("main") {
                             val context = LocalContext.current
                             
-                            // ⭐ 新增：监听位置变化并同步到 ChatViewModel
                             LaunchedEffect(Unit) {
-                                Log.d("MainActivity", "📍 开始监听位置变化")
+                                Log.d("MainActivity", "Starting to monitor location changes")
                                 homeViewModel.currentLocation.collect { location ->
                                     if (location != null) {
-                                        Log.d("MainActivity", "📍 收到位置更新：lat=${location.latitude}, lng=${location.longitude}")
+                                        Log.d("MainActivity", "Location update received: lat=${location.latitude}, lng=${location.longitude}")
                                         chatViewModel.syncLocationFromHome(location.latitude, location.longitude)
                                     } else {
-                                        Log.w("MainActivity", "⚠️ 位置为 null")
+                                        Log.w("MainActivity", "Location is null")
                                     }
                                 }
                             }
@@ -163,7 +154,6 @@ class MainActivity : ComponentActivity() {
                                     navController.navigate("order_detail/$orderId")
                                 },
                                 onNavigateToOrderList = {
-                                    // ⭐ 修改：使用 popUpTo 避免重复添加订单列表界面
                                     navController.navigate("orderList") {
                                         popUpTo("main") {
                                             inclusive = false
@@ -171,7 +161,6 @@ class MainActivity : ComponentActivity() {
                                     }
                                 },
                                 onNavigateToChat = {
-                                    // ⭐ 修改：使用 popUpTo 避免重复添加聊天界面
                                     navController.navigate("chat") {
                                         popUpTo("main") {
                                             inclusive = false
@@ -185,10 +174,10 @@ class MainActivity : ComponentActivity() {
                             if (orderId != null) {
                                 OrderDetailScreen(
                                     orderId = orderId,
-                                    onBackClick = { navController.popBackStack() }  // ⭐ 新增：返回键回调
+                                    onBackClick = { navController.popBackStack() }
                                 )
                             } else {
-                                Text("无效的订单 ID")
+                                Text("Invalid order ID")
                             }
                         }
                         composable("orderList") {
@@ -211,7 +200,6 @@ class MainActivity : ComponentActivity() {
                                 chatMode = ChatMode.AGENT
                             )
                         }
-                        // ⭐ 新增：聊天列表页面
                         composable("agent_chat") {
                             ChatListScreen(
                                 onBackClick = { navController.popBackStack() },
@@ -227,31 +215,25 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            Log.d(TAG, "=== MainActivity onCreate 完成 ===")
+            Log.d(TAG, "=== MainActivity onCreate completed ===")
         } catch (e: Exception) {
-            Log.e(TAG, "onCreate 过程中发生异常", e)
+            Log.e(TAG, "Exception occurred during onCreate", e)
             throw e
         }
     }
 
-    // ⭐ 新增：处理 Activity 重启时的 Intent
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         val navigateToChat = intent.getBooleanExtra("navigate_to_chat", false)
         if (navigateToChat) {
-            Log.d(TAG, "onNewIntent: 从悬浮窗进入聊天界面")
+            Log.d(TAG, "onNewIntent: Navigate to chat from float window")
             _navigateToChat = true
-            // ⭐ 重要：不设置任何 flags，让用户自然留在当前导航栈中
-            // Compose 会通过 StateFlow 自动检测到变化并导航到聊天界面
         }
     }
 
-    // ⭐ 新增：在登录成功后请求悬浮窗权限
     fun requestFloatPermissionAfterLogin() {
         lifecycleScope.launch {
-            delay(500) // 稍微延迟，等待登录动画完成
-            // ⭐ 修改：暂时禁用悬浮窗权限请求
-            // requestFloatPermission()
+            delay(500)
         }
     }
 
@@ -259,27 +241,22 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         Log.d(TAG, "=== MainActivity onDestroy ===")
         
-        // ⭐ 修改：确保停止悬浮窗服务
         try {
             val intent = Intent(this, AgentFloatService::class.java)
             stopService(intent)
-            Log.d(TAG, "悬浮窗服务已停止")
+            Log.d(TAG, "Float service stopped")
         } catch (e: Exception) {
-            Log.e(TAG, "停止悬浮窗服务失败", e)
+            Log.e(TAG, "Failed to stop float service", e)
         }
         
-        // ⭐ 重要：不要在 onDestroy 中断开 WebSocket!
-        // WebSocket 应该保持连接，除非用户主动退出登录
-        Log.d(TAG, "保持 WebSocket 连接，不断开")
-        Log.d(TAG, "注意：切换页面不会断开 WebSocket")
+        Log.d(TAG, "Keep WebSocket connection, do not disconnect")
     }
 }
 
-// ⭐ 修改：接收外部传入的 ViewModel
 @Composable
 fun MyApplicationApp(
-    homeViewModel: HomeViewModel,  // ⭐ 新增参数
-    chatViewModel: ChatViewModel,  // ⭐ 新增参数
+    homeViewModel: HomeViewModel,
+    chatViewModel: ChatViewModel,
     onNavigateToOrderDetail: (Long) -> Unit = {},
     onNavigateToOrderList: () -> Unit = {},
     onNavigateToChat: () -> Unit = {}
@@ -287,48 +264,42 @@ fun MyApplicationApp(
     var currentDestination by rememberSaveable { mutableStateOf<String?>("home") }
     val context = LocalContext.current
     
-    // ⭐ 新增：每次切换到主页时刷新定位
     LaunchedEffect(currentDestination) {
         if (currentDestination == "home") {
-            Log.d("MyApplicationApp", "🔄 返回主页，检查位置状态")
+            Log.d("MyApplicationApp", "Return to home, check location status")
             
-            // ⭐ 修改：检查当前位置是否有效，如果无效则等待定位完成
             var currentLoc = homeViewModel.currentLocation.value
             
-            // 如果位置无效，等待最多 5 秒让高德地图完成定位
             if (currentLoc == null || currentLoc.latitude == 0.0 || currentLoc.longitude == 0.0) {
-                Log.w("MyApplicationApp", "⚠️ 当前位置无效，等待高德地图定位...")
+                Log.w("MyApplicationApp", "Current location invalid, waiting for AMap positioning...")
                 
-                // 轮询等待位置更新（最多等 5 秒）
                 var waitCount = 0
-                while (waitCount < 50) {  // 50 * 100ms = 5 秒
+                while (waitCount < 50) {
                     delay(100)
                     currentLoc = homeViewModel.currentLocation.value
                     if (currentLoc != null && currentLoc.latitude != 0.0 && currentLoc.longitude != 0.0) {
-                        Log.d("MyApplicationApp", "✅ 定位成功：lat=${currentLoc.latitude}, lng=${currentLoc.longitude}")
+                        Log.d("MyApplicationApp", "Positioning successful: lat=${currentLoc.latitude}, lng=${currentLoc.longitude}")
                         break
                     }
                     waitCount++
                 }
                 
                 if (currentLoc == null || currentLoc.latitude == 0.0 || currentLoc.longitude == 0.0) {
-                    Log.e("MyApplicationApp", "❌ 定位超时，请检查定位权限")
+                    Log.e("MyApplicationApp", "Positioning timeout, please check location permission")
                     return@LaunchedEffect
                 }
             } else {
-                Log.d("MyApplicationApp", "✅ 当前位置有效：lat=${currentLoc.latitude}, lng=${currentLoc.longitude}")
+                Log.d("MyApplicationApp", "Current location valid: lat=${currentLoc.latitude}, lng=${currentLoc.longitude}")
             }
             
-            // ⭐ 确保 ChatViewModel 收到最新位置
             chatViewModel.syncLocationFromHome(currentLoc.latitude, currentLoc.longitude)
-            Log.d("MyApplicationApp", "📍 位置已同步到 ChatViewModel")
+            Log.d("MyApplicationApp", "Location synced to ChatViewModel")
         }
     }
 
     Scaffold(
         bottomBar = {
             NavigationBar {
-                // ⭐ 修改：按指定顺序排列导航项，统一图标大小
                 NavigationBarItem(
                     selected = currentDestination == "home",
                     onClick = {
@@ -337,11 +308,11 @@ fun MyApplicationApp(
                     icon = {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_home),
-                            contentDescription = "首页",
-                            modifier = Modifier.size(24.dp)  // ⭐ 统一图标大小
+                            contentDescription = "Home",
+                            modifier = Modifier.size(24.dp)
                         )
                     },
-                    label = { Text("首页") }
+                    label = { Text("Home") }
                 )
                 NavigationBarItem(
                     selected = currentDestination == "favorites",
@@ -351,11 +322,11 @@ fun MyApplicationApp(
                     icon = {
                         Icon(
                             imageVector = Icons.Default.FavoriteBorder,
-                            contentDescription = "收藏",
-                            modifier = Modifier.size(24.dp)  // ⭐ 统一图标大小
+                            contentDescription = "Favorites",
+                            modifier = Modifier.size(24.dp)
                         )
                     },
-                    label = { Text("收藏") }
+                    label = { Text("Favorites") }
                 )
                 NavigationBarItem(
                     selected = currentDestination == "chat",
@@ -365,11 +336,11 @@ fun MyApplicationApp(
                     icon = {
                         Icon(
                             imageVector = Icons.Default.Chat,
-                            contentDescription = "聊天",
-                            modifier = Modifier.size(24.dp)  // ⭐ 统一图标大小
+                            contentDescription = "Chat",
+                            modifier = Modifier.size(24.dp)
                         )
                     },
-                    label = { Text("聊天") }
+                    label = { Text("Chat") }
                 )
                 NavigationBarItem(
                     selected = currentDestination == "profile",
@@ -379,11 +350,11 @@ fun MyApplicationApp(
                     icon = {
                         Icon(
                             painterResource(id = R.drawable.ic_account_box),
-                            contentDescription = "个人",
-                            modifier = Modifier.size(24.dp)  // ⭐ 统一图标大小
+                            contentDescription = "Profile",
+                            modifier = Modifier.size(24.dp)
                         )
                     },
-                    label = { Text("个人") }
+                    label = { Text("Profile") }
                 )
             }
         }
@@ -415,13 +386,13 @@ fun MyApplicationApp(
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "暂无收藏",
+                            text = "No favorites yet",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "点击地图标记喜欢的地点",
+                            text = "Tap map to mark favorite locations",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -431,7 +402,6 @@ fun MyApplicationApp(
                     ChatListScreen(
                         onBackClick = { currentDestination = "home" },
                         onSessionSelected = { sessionId: String ->
-                            // 会话选择逻辑
                         },
                         onNavigateToAgent = {
                             currentDestination = "agent_chat"

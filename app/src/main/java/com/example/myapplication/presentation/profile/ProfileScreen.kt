@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -68,7 +67,6 @@ fun ProfileScreen(
     var showAvatarCropDialog by remember { mutableStateOf(false) }
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
 
-    // 控制各个折叠区域的状态
     var showNicknameSection by remember { mutableStateOf(false) }
     var showPasswordSection by remember { mutableStateOf(false) }
     var showRealNameSection by remember { mutableStateOf(false) }
@@ -85,7 +83,7 @@ fun ProfileScreen(
                 outputStream.close()
                 viewModel.uploadAvatar(uri, file)
             } catch (e: Exception) {
-                Log.e("ProfileScreen", "❌ 保存裁剪图片失败", e)
+                Log.e("ProfileScreen", "Failed to save cropped image", e)
             }
         }
         showAvatarCropDialog = false
@@ -93,7 +91,7 @@ fun ProfileScreen(
     }
 
     LaunchedEffect(Unit) {
-        Log.d("ProfileScreen", "=== ProfileScreen 首次加载 ===")
+        Log.d("ProfileScreen", "=== ProfileScreen first load ===")
         viewModel.loadProfile()
         viewModel.loadEmergencyContacts()
     }
@@ -102,7 +100,7 @@ fun ProfileScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
-            Log.d("ProfileScreen", "图片选择成功：$it")
+            Log.d("ProfileScreen", "Image selection successful: $it")
             selectedImageUri = it
             showAvatarCropDialog = true
         }
@@ -145,8 +143,8 @@ fun ProfileScreen(
     if (showPermissionDialog) {
         AlertDialog(
             onDismissRequest = { showPermissionDialog = false },
-            title = { Text("需要存储权限") },
-            text = { Text("需要访问相册才能选择头像，请在设置中允许访问相册") },
+            title = { Text("Storage Permission Required") },
+            text = { Text("Storage permission is needed to select avatar. Please allow access in settings.") },
             confirmButton = {
                 Button(
                     onClick = {
@@ -157,10 +155,10 @@ fun ProfileScreen(
                         )
                         context.startActivity(intent)
                     }
-                ) { Text("去设置") }
+                ) { Text("Go to Settings") }
             },
             dismissButton = {
-                TextButton(onClick = { showPermissionDialog = false }) { Text("取消") }
+                TextButton(onClick = { showPermissionDialog = false }) { Text("Cancel") }
             }
         )
     }
@@ -168,7 +166,7 @@ fun ProfileScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("个人中心") },
+                title = { Text("Profile") },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     titleContentColor = MaterialTheme.colorScheme.onPrimary
@@ -180,7 +178,7 @@ fun ProfileScreen(
                     }) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
-                            contentDescription = "刷新",
+                            contentDescription = "Refresh",
                             tint = MaterialTheme.colorScheme.onPrimary
                         )
                     }
@@ -208,12 +206,12 @@ fun ProfileScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(
-                                text = "⚠️ 未加载到用户信息",
+                                text = "User info not loaded",
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.onErrorContainer
                             )
                             Text(
-                                text = "可能原因:\n1. 尚未登录\n2. Token 未准备好\n3. 网络请求失败",
+                                text = "Possible reasons:\n1. Not logged in\n2. Token not ready\n3. Network request failed",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onErrorContainer
                             )
@@ -224,7 +222,7 @@ fun ProfileScreen(
                                 },
                                 modifier = Modifier.align(Alignment.End)
                             ) {
-                                Text("重新加载")
+                                Text("Reload")
                             }
                         }
                     }
@@ -232,19 +230,16 @@ fun ProfileScreen(
                 }
             }
 
+            // 头像和基本信息卡片
             item {
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     contentAlignment = Alignment.Center
                 ) {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = Color.White
-                        )
+                        colors = CardDefaults.cardColors(containerColor = Color.White)
                     ) {
                         Column(
                             modifier = Modifier.padding(16.dp),
@@ -258,7 +253,6 @@ fun ProfileScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 val avatarValue = profile?.avatar
-                                Log.d("ProfileScreen", "头像值: $avatarValue")
                                 val avatarUrl = if (!avatarValue.isNullOrBlank()) {
                                     val cleanUrl = avatarValue.trim()
                                     when {
@@ -267,7 +261,6 @@ fun ProfileScreen(
                                         else -> "http://10.224.165.80:8080/$cleanUrl"
                                     }
                                 } else null
-                                Log.d("ProfileScreen", "头像URL: $avatarUrl")
 
                                 if (avatarUrl != null) {
                                     Image(
@@ -276,32 +269,25 @@ fun ProfileScreen(
                                                 .data(avatarUrl)
                                                 .crossfade(true)
                                                 .size(200, 200)
-                                                .diskCachePolicy(coil.request.CachePolicy.ENABLED)
-                                                .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
                                                 .build()
                                         ),
-                                        contentDescription = "头像",
-                                        modifier = Modifier
-                                            .size(100.dp)
-                                            .clip(CircleShape),
+                                        contentDescription = "Avatar",
+                                        modifier = Modifier.size(100.dp).clip(CircleShape),
                                         contentScale = ContentScale.Crop
                                     )
                                 } else {
                                     Icon(
                                         imageVector = Icons.Default.Person,
-                                        contentDescription = "默认头像",
-                                        modifier = Modifier
-                                            .size(100.dp)
-                                            .clip(CircleShape),
+                                        contentDescription = "Default avatar",
+                                        modifier = Modifier.size(100.dp).clip(CircleShape),
                                         tint = MaterialTheme.colorScheme.primary
                                     )
                                 }
                             }
 
                             Spacer(modifier = Modifier.height(8.dp))
-
                             Text(
-                                text = "点击更换头像",
+                                text = "Tap to change avatar",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -309,9 +295,7 @@ fun ProfileScreen(
                             if (errorMessage?.contains("头像") == true || errorMessage?.contains("上传") == true) {
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.errorContainer
-                                    )
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
                                 ) {
                                     Text(
                                         text = "❌ $errorMessage",
@@ -325,9 +309,7 @@ fun ProfileScreen(
                             if (successMessage?.contains("头像") == true) {
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.primaryContainer
-                                    )
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                                 ) {
                                     Text(
                                         text = "✅ $successMessage",
@@ -342,7 +324,7 @@ fun ProfileScreen(
 
                             profile?.nickname?.let { nickname ->
                                 Text(
-                                    text = "昵称：$nickname",
+                                    text = "Nickname: $nickname",
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.primary
                                 )
@@ -350,15 +332,13 @@ fun ProfileScreen(
                             }
 
                             Text(
-                                text = profile?.phone ?: "未登录",
+                                text = profile?.phone ?: "Not logged in",
                                 style = MaterialTheme.typography.titleMedium
                             )
 
                             Spacer(modifier = Modifier.height(4.dp))
 
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 val verified = profile?.verified ?: 0
                                 Icon(
                                     imageVector = if (verified == 1) Icons.Default.CheckCircle else Icons.Default.Error,
@@ -368,7 +348,7 @@ fun ProfileScreen(
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = if (verified == 1) "已实名认证" else "未实名认证",
+                                    text = if (verified == 1) "Verified" else "Not verified",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = if (verified == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                                 )
@@ -378,412 +358,72 @@ fun ProfileScreen(
                 }
             }
 
+            // 修改昵称卡片
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color.White
-                    )
+                    colors = CardDefaults.cardColors(containerColor = Color.White)
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ExpandableSection(
+                        title = "修改昵称",
+                        icon = Icons.Default.Person,
+                        expanded = showNicknameSection,
+                        onExpandToggle = { showNicknameSection = !showNicknameSection }
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { showNicknameSection = !showNicknameSection },
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.Person,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "修改昵称",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                            }
-                            Icon(
-                                imageVector = if (showNicknameSection) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                contentDescription = if (showNicknameSection) "收起" else "展开",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        AnimatedVisibility(
-                            visible = showNicknameSection,
-                            enter = fadeIn() + expandVertically(),
-                            exit = fadeOut() + shrinkVertically()
-                        ) {
-                            Column(
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedTextField(
-                                    value = nicknameInput,
-                                    onValueChange = viewModel::updateNicknameInput,
-                                    label = { Text("昵称") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    singleLine = true,
-                                    placeholder = { Text("请输入新昵称") },
-                                    trailingIcon = {
-                                        if (nicknameInput.isNotBlank()) {
-                                            IconButton(onClick = { viewModel.updateNicknameInput("") }) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Clear,
-                                                    contentDescription = "清空",
-                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            }
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = nicknameInput,
+                                onValueChange = viewModel::updateNicknameInput,
+                                label = { Text("昵称") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                placeholder = { Text("请输入新昵称") },
+                                trailingIcon = {
+                                    if (nicknameInput.isNotBlank()) {
+                                        IconButton(onClick = { viewModel.updateNicknameInput("") }) {
+                                            Icon(Icons.Default.Clear, contentDescription = "清空")
                                         }
-                                    },
-                                    isError = errorMessage?.contains("昵称") == true
-                                )
-
-                                if (errorMessage?.contains("昵称") == true) {
-                                    Card(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = MaterialTheme.colorScheme.errorContainer
-                                        )
-                                    ) {
-                                        Text(
-                                            text = "❌ $errorMessage",
-                                            modifier = Modifier.padding(12.dp),
-                                            color = MaterialTheme.colorScheme.onErrorContainer,
-                                            style = MaterialTheme.typography.bodySmall
-                                        )
                                     }
-                                }
-
-                                if (successMessage?.contains("昵称") == true) {
-                                    Card(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = MaterialTheme.colorScheme.primaryContainer
-                                        )
-                                    ) {
-                                        Text(
-                                            text = "✅ $successMessage",
-                                            modifier = Modifier.padding(12.dp),
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                            style = MaterialTheme.typography.bodySmall
-                                        )
-                                    }
-                                }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End
+                                },
+                                isError = errorMessage?.contains("昵称") == true
+                            )
+                            if (errorMessage?.contains("昵称") == true) {
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
                                 ) {
-                                    Button(
-                                        onClick = { viewModel.changeNickname() },
-                                        enabled = !isOperationLoading && nicknameInput.isNotBlank()
-                                    ) {
-                                        if (isOperationLoading) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(16.dp),
-                                                color = MaterialTheme.colorScheme.onPrimary
-                                            )
-                                        } else {
-                                            Text("修改")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color.White
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { showPasswordSection = !showPasswordSection },
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.Lock,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "修改密码",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                            }
-                            Icon(
-                                imageVector = if (showPasswordSection) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                contentDescription = if (showPasswordSection) "收起" else "展开",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        AnimatedVisibility(
-                            visible = showPasswordSection,
-                            enter = fadeIn() + expandVertically(),
-                            exit = fadeOut() + shrinkVertically()
-                        ) {
-                            Column(
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedTextField(
-                                    value = codeInput,
-                                    onValueChange = viewModel::updateCodeInput,
-                                    label = { Text("验证码") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    singleLine = true,
-                                    trailingIcon = {
-                                        Button(
-                                            onClick = { viewModel.sendCodeForPassword() },
-                                            enabled = !(isOperationLoading || isSendingCode),
-                                            modifier = Modifier.size(width = 100.dp, height = 36.dp),
-                                            contentPadding = PaddingValues(horizontal = 8.dp)
-                                        ) {
-                                            if (isSendingCode) {
-                                                CircularProgressIndicator(
-                                                    modifier = Modifier.size(14.dp),
-                                                    color = MaterialTheme.colorScheme.onPrimary,
-                                                    strokeWidth = 2.dp
-                                                )
-                                            } else {
-                                                Text(
-                                                    "获取",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    maxLines = 1
-                                                )
-                                            }
-                                        }
-                                    },
-                                    isError = errorMessage?.contains("验证码") == true
-                                )
-
-                                if (errorMessage?.contains("验证码") == true) {
                                     Text(
                                         text = "❌ $errorMessage",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.error,
-                                        modifier = Modifier.padding(start = 16.dp)
+                                        modifier = Modifier.padding(12.dp),
+                                        color = MaterialTheme.colorScheme.onErrorContainer,
+                                        style = MaterialTheme.typography.bodySmall
                                     )
                                 }
-
-                                if (successMessage?.contains("验证码") == true) {
+                            }
+                            if (successMessage?.contains("昵称") == true) {
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                                ) {
                                     Text(
                                         text = "✅ $successMessage",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.padding(start = 16.dp)
+                                        modifier = Modifier.padding(12.dp),
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        style = MaterialTheme.typography.bodySmall
                                     )
                                 }
-
-                                OutlinedTextField(
-                                    value = newPasswordInput,
-                                    onValueChange = viewModel::updateNewPasswordInput,
-                                    label = { Text("新密码") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    visualTransformation = PasswordVisualTransformation(),
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                                    singleLine = true,
-                                    isError = errorMessage?.contains("密码") == true
-                                )
-
-                                Text(
-                                    text = "💡 密码要求：至少 10 位，必须包含字母和特殊符号",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = if (errorMessage?.contains("密码") == true)
-                                        MaterialTheme.colorScheme.error
-                                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(start = 16.dp)
-                                )
-
-                                if (errorMessage?.contains("密码") == true && !errorMessage!!.contains("验证码")) {
-                                    Text(
-                                        text = "❌ $errorMessage",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.error,
-                                        modifier = Modifier.padding(start = 16.dp)
-                                    )
-                                }
-
-                                if (successMessage?.contains("密码") == true) {
-                                    Card(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = MaterialTheme.colorScheme.primaryContainer
-                                        )
-                                    ) {
-                                        Text(
-                                            text = "✅ $successMessage",
-                                            modifier = Modifier.padding(12.dp),
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                            style = MaterialTheme.typography.bodyMedium
-                                        )
-                                    }
-                                }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End
-                                ) {
-                                    Button(
-                                        onClick = { viewModel.changePassword() },
-                                        enabled = !isOperationLoading && codeInput.isNotBlank() && newPasswordInput.isNotBlank()
-                                    ) {
-                                        if (isOperationLoading) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(16.dp),
-                                                color = MaterialTheme.colorScheme.onPrimary
-                                            )
-                                        } else {
-                                            Text("修改密码")
-                                        }
-                                    }
-                                }
                             }
-                        }
-                    }
-                }
-            }
-
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color.White
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { showRealNameSection = !showRealNameSection },
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.Badge,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "实名认证",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                            }
-                            Icon(
-                                imageVector = if (showRealNameSection) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                contentDescription = if (showRealNameSection) "收起" else "展开",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        AnimatedVisibility(
-                            visible = showRealNameSection,
-                            enter = fadeIn() + expandVertically(),
-                            exit = fadeOut() + shrinkVertically()
-                        ) {
-                            Column(
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
                             ) {
-                                OutlinedTextField(
-                                    value = realNameInput,
-                                    onValueChange = viewModel::updateRealNameInput,
-                                    label = { Text("姓名") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    singleLine = true,
-                                    isError = errorMessage?.contains("姓名") == true || errorMessage?.contains("身份证") == true
-                                )
-                                OutlinedTextField(
-                                    value = idCardInput,
-                                    onValueChange = viewModel::updateIdCardInput,
-                                    label = { Text("身份证号") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    singleLine = true,
-                                    isError = errorMessage?.contains("身份证") == true
-                                )
-                                Text(
-                                    text = "测试账号：张三 110101199001011234",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-
-                                if (errorMessage?.contains("实名") == true || errorMessage?.contains("身份证") == true || errorMessage?.contains("姓名") == true) {
-                                    Card(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = MaterialTheme.colorScheme.errorContainer
-                                        )
-                                    ) {
-                                        Text(
-                                            text = "❌ $errorMessage",
-                                            modifier = Modifier.padding(12.dp),
-                                            color = MaterialTheme.colorScheme.onErrorContainer,
-                                            style = MaterialTheme.typography.bodySmall
-                                        )
-                                    }
-                                }
-
-                                if (successMessage?.contains("实名") == true || successMessage?.contains("认证") == true) {
-                                    Card(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = MaterialTheme.colorScheme.primaryContainer
-                                        )
-                                    ) {
-                                        Text(
-                                            text = "✅ $successMessage",
-                                            modifier = Modifier.padding(12.dp),
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                            style = MaterialTheme.typography.bodySmall
-                                        )
-                                    }
-                                }
-
                                 Button(
-                                    onClick = viewModel::submitRealNameAuth,
-                                    enabled = !isOperationLoading && realNameInput.isNotBlank() && idCardInput.isNotBlank(),
-                                    modifier = Modifier.align(Alignment.End)
+                                    onClick = { viewModel.changeNickname() },
+                                    enabled = !isOperationLoading && nicknameInput.isNotBlank()
                                 ) {
                                     if (isOperationLoading) {
                                         CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary)
                                     } else {
-                                        Text("提交认证")
+                                        Text("修改")
                                     }
                                 }
                             }
@@ -792,180 +432,344 @@ fun ProfileScreen(
                 }
             }
 
+            // 修改密码卡片
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color.White
-                    )
+                    colors = CardDefaults.cardColors(containerColor = Color.White)
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ExpandableSection(
+                        title = "修改密码",
+                        icon = Icons.Default.Lock,
+                        expanded = showPasswordSection,
+                        onExpandToggle = { showPasswordSection = !showPasswordSection }
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { showContactsSection = !showContactsSection },
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.ContactPhone,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = codeInput,
+                                onValueChange = viewModel::updateCodeInput,
+                                label = { Text("验证码") },
+                                modifier = Modifier.fillMaxWidth(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                trailingIcon = {
+                                    Button(
+                                        onClick = { viewModel.sendCodeForPassword() },
+                                        enabled = !(isOperationLoading || isSendingCode),
+                                        modifier = Modifier.size(width = 100.dp, height = 36.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp)
+                                    ) {
+                                        if (isSendingCode) {
+                                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                                        } else {
+                                            Text("获取", style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                                        }
+                                    }
+                                },
+                                isError = errorMessage?.contains("验证码") == true
+                            )
+                            if (errorMessage?.contains("验证码") == true) {
                                 Text(
-                                    text = "紧急联系人",
-                                    style = MaterialTheme.typography.titleMedium
+                                    text = "❌ $errorMessage",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(start = 16.dp)
                                 )
                             }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Button(
-                                    onClick = { showAddContactDialog = true },
-                                    enabled = !isOperationLoading
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Add,
-                                        contentDescription = "添加",
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("添加")
-                                }
-                                Icon(
-                                    imageVector = if (showContactsSection) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                    contentDescription = if (showContactsSection) "收起" else "展开",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            if (successMessage?.contains("验证码") == true) {
+                                Text(
+                                    text = "✅ $successMessage",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(start = 16.dp)
                                 )
+                            }
+                            OutlinedTextField(
+                                value = newPasswordInput,
+                                onValueChange = viewModel::updateNewPasswordInput,
+                                label = { Text("新密码") },
+                                modifier = Modifier.fillMaxWidth(),
+                                visualTransformation = PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                singleLine = true,
+                                isError = errorMessage?.contains("密码") == true
+                            )
+                            Text(
+                                text = "💡 密码要求：至少 10 位，必须包含字母和特殊符号",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (errorMessage?.contains("密码") == true) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 16.dp)
+                            )
+                            if (errorMessage?.contains("密码") == true && !errorMessage!!.contains("验证码")) {
+                                Text(
+                                    text = "❌ $errorMessage",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(start = 16.dp)
+                                )
+                            }
+                            if (successMessage?.contains("密码") == true) {
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                                ) {
+                                    Text(
+                                        text = "✅ $successMessage",
+                                        modifier = Modifier.padding(12.dp),
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                }
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                Button(
+                                    onClick = { viewModel.changePassword() },
+                                    enabled = !isOperationLoading && codeInput.isNotBlank() && newPasswordInput.isNotBlank()
+                                ) {
+                                    if (isOperationLoading) {
+                                        CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                                    } else {
+                                        Text("修改密码")
+                                    }
+                                }
                             }
                         }
+                    }
+                }
+            }
 
-                        AnimatedVisibility(
-                            visible = showContactsSection,
-                            enter = fadeIn() + expandVertically(),
-                            exit = fadeOut() + shrinkVertically()
-                        ) {
-                            Column(
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
+            // 实名认证卡片
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White)
+                ) {
+                    ExpandableSection(
+                        title = "实名认证",
+                        icon = Icons.Default.Badge,
+                        expanded = showRealNameSection,
+                        onExpandToggle = { showRealNameSection = !showRealNameSection }
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = realNameInput,
+                                onValueChange = viewModel::updateRealNameInput,
+                                label = { Text("姓名") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                isError = errorMessage?.contains("姓名") == true || errorMessage?.contains("身份证") == true
+                            )
+                            OutlinedTextField(
+                                value = idCardInput,
+                                onValueChange = viewModel::updateIdCardInput,
+                                label = { Text("身份证号") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                isError = errorMessage?.contains("身份证") == true
+                            )
+                            Text(
+                                text = "测试账号：张三 110101199001011234",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (errorMessage?.contains("实名") == true || errorMessage?.contains("身份证") == true || errorMessage?.contains("姓名") == true) {
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                                ) {
+                                    Text(
+                                        text = "❌ $errorMessage",
+                                        modifier = Modifier.padding(12.dp),
+                                        color = MaterialTheme.colorScheme.onErrorContainer,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
+                            if (successMessage?.contains("实名") == true || successMessage?.contains("认证") == true) {
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                                ) {
+                                    Text(
+                                        text = "✅ $successMessage",
+                                        modifier = Modifier.padding(12.dp),
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
+                            Button(
+                                onClick = viewModel::submitRealNameAuth,
+                                enabled = !isOperationLoading && realNameInput.isNotBlank() && idCardInput.isNotBlank(),
+                                modifier = Modifier.align(Alignment.End)
                             ) {
-                                if (isContactsLoading) {
-                                    Box(
+                                if (isOperationLoading) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                                } else {
+                                    Text("提交认证")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 紧急联系人卡片
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White)
+                ) {
+                    ExpandableSection(
+                        title = "紧急联系人",
+                        icon = Icons.Default.ContactPhone,
+                        expanded = showContactsSection,
+                        onExpandToggle = { showContactsSection = !showContactsSection },
+                        trailingContent = {
+                            Button(
+                                onClick = { showAddContactDialog = true },
+                                enabled = !isOperationLoading
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = "添加", modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("添加")
+                            }
+                        }
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (isContactsLoading) {
+                                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator()
+                                }
+                            } else if (contacts.isNotEmpty()) {
+                                contacts.forEach { contact ->
+                                    Card(
                                         modifier = Modifier.fillMaxWidth(),
-                                        contentAlignment = Alignment.Center
+                                        colors = CardDefaults.cardColors(containerColor = Color.White)
                                     ) {
-                                        CircularProgressIndicator()
-                                    }
-                                } else if (contacts.isNotEmpty()) {
-                                    contacts.forEach { contact ->
-                                        Card(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            colors = CardDefaults.cardColors(
-                                                containerColor = Color.White
-                                            )
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(12.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(Icons.Default.Person, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Column {
+                                                    Text(text = contact.name, style = MaterialTheme.typography.bodyLarge)
+                                                    Text(text = contact.phone, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                }
+                                            }
+                                            IconButton(
+                                                onClick = { viewModel.deleteEmergencyContact(contact.id) },
+                                                enabled = !isOperationLoading
                                             ) {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Person,
-                                                        contentDescription = null,
-                                                        tint = MaterialTheme.colorScheme.primary,
-                                                        modifier = Modifier.size(20.dp)
-                                                    )
-                                                    Spacer(modifier = Modifier.width(8.dp))
-                                                    Column {
-                                                        Text(
-                                                            text = contact.name,
-                                                            style = MaterialTheme.typography.bodyLarge,
-                                                            color = MaterialTheme.colorScheme.onSurface
-                                                        )
-                                                        Text(
-                                                            text = contact.phone,
-                                                            style = MaterialTheme.typography.bodySmall,
-                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                        )
-                                                    }
-                                                }
-                                                IconButton(
-                                                    onClick = { viewModel.deleteEmergencyContact(contact.id) },
-                                                    enabled = !isOperationLoading
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Delete,
-                                                        contentDescription = "删除",
-                                                        tint = MaterialTheme.colorScheme.error
-                                                    )
-                                                }
+                                                Icon(Icons.Default.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error)
                                             }
                                         }
                                     }
-                                } else {
-                                    Text(
-                                        text = "暂无紧急联系人",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
                                 }
+                            } else {
+                                Text(
+                                    text = "暂无紧急联系人",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                     }
-                }
-            }
-
-            item {
-                if (showAddContactDialog) {
-                    AddEmergencyContactDialog(
-                        onDismissRequest = { showAddContactDialog = false },
-                        onConfirm = { name, phone ->
-                            viewModel.updateContactNameInput(name)
-                            viewModel.updateContactPhoneInput(phone)
-                            viewModel.addEmergencyContact()
-                        },
-                        name = contactNameInput,
-                        phone = contactPhoneInput,
-                        onNameChange = viewModel::updateContactNameInput,
-                        onPhoneChange = viewModel::updateContactPhoneInput,
-                        isLoading = isOperationLoading,
-                        errorMessage = if (errorMessage?.contains("联系人") == true || errorMessage?.contains("姓名") == true || errorMessage?.contains("电话") == true) errorMessage else null,
-                        successMessage = if (successMessage?.contains("联系人") == true || successMessage?.contains("添加") == true) successMessage else null
-                    )
-
-                    LaunchedEffect(successMessage) {
-                        if (successMessage?.contains("联系人") == true || successMessage?.contains("添加") == true) {
-                            showAddContactDialog = false
-                        }
-                    }
-                }
-            }
-
-            item {
-                if (showAvatarCropDialog && selectedImageUri != null) {
-                    AvatarCropDialog(
-                        imageUri = selectedImageUri!!,
-                        onDismissRequest = {
-                            showAvatarCropDialog = false
-                            selectedImageUri = null
-                        },
-                        onConfirmCrop = { croppedBitmap -> confirmAvatarCrop(croppedBitmap) }
-                    )
                 }
             }
         }
     }
+
+    // 对话框（放在 Scaffold 外部但仍在同一个 Composable 作用域内）
+    if (showAddContactDialog) {
+        AddEmergencyContactDialog(
+            onDismissRequest = { showAddContactDialog = false },
+            onConfirm = { name, phone ->
+                viewModel.updateContactNameInput(name)
+                viewModel.updateContactPhoneInput(phone)
+                viewModel.addEmergencyContact()
+            },
+            name = contactNameInput,
+            phone = contactPhoneInput,
+            onNameChange = viewModel::updateContactNameInput,
+            onPhoneChange = viewModel::updateContactPhoneInput,
+            isLoading = isOperationLoading,
+            errorMessage = errorMessage,
+            successMessage = successMessage
+        )
+        LaunchedEffect(successMessage) {
+            if (successMessage?.contains("联系人") == true || successMessage?.contains("添加") == true) {
+                showAddContactDialog = false
+            }
+        }
+    }
+
+    if (showAvatarCropDialog && selectedImageUri != null) {
+        AvatarCropDialog(
+            imageUri = selectedImageUri!!,
+            onDismissRequest = {
+                showAvatarCropDialog = false
+                selectedImageUri = null
+            },
+            onConfirmCrop = { croppedBitmap -> confirmAvatarCrop(croppedBitmap) }
+        )
+    }
 }
 
+// 可折叠卡片组件
+@Composable
+private fun ExpandableSection(
+    title: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    expanded: Boolean,
+    onExpandToggle: () -> Unit,
+    trailingContent: @Composable (() -> Unit)? = null,
+    content: @Composable () -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onExpandToggle() },
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(title, style = MaterialTheme.typography.titleMedium)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (trailingContent != null) {
+                    trailingContent()
+                }
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "收起" else "展开",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut()
+        ) {
+            content()
+        }
+    }
+}
+
+// 添加紧急联系人对话框
 @Composable
 fun AddEmergencyContactDialog(
     onDismissRequest: () -> Unit,
@@ -988,7 +792,7 @@ fun AddEmergencyContactDialog(
                     onValueChange = onNameChange,
                     label = { Text("姓名") },
                     singleLine = true,
-                    isError = errorMessage?.contains("联系人") == true || errorMessage?.contains("姓名") == true
+                    isError = errorMessage?.contains("姓名") == true
                 )
                 OutlinedTextField(
                     value = phone,
@@ -996,14 +800,11 @@ fun AddEmergencyContactDialog(
                     label = { Text("电话") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                     singleLine = true,
-                    isError = errorMessage?.contains("电话") == true || errorMessage?.contains("手机") == true
+                    isError = errorMessage?.contains("电话") == true
                 )
-
-                if (errorMessage != null && (errorMessage.contains("联系人") || errorMessage.contains("姓名") || errorMessage.contains("电话") || errorMessage.contains("手机"))) {
+                if (errorMessage != null && (errorMessage.contains("姓名") || errorMessage.contains("电话"))) {
                     Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer
-                        )
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
                     ) {
                         Text(
                             text = "❌ $errorMessage",
@@ -1013,12 +814,9 @@ fun AddEmergencyContactDialog(
                         )
                     }
                 }
-
-                if (successMessage != null && (successMessage.contains("联系人") || successMessage.contains("添加"))) {
+                if (successMessage != null && successMessage.contains("添加")) {
                     Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer
-                        )
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                     ) {
                         Text(
                             text = "✅ $successMessage",
@@ -1036,7 +834,7 @@ fun AddEmergencyContactDialog(
                 enabled = !isLoading && name.isNotBlank() && phone.isNotBlank()
             ) {
                 if (isLoading) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary)
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
                 } else {
                     Text("添加")
                 }
@@ -1048,6 +846,7 @@ fun AddEmergencyContactDialog(
     )
 }
 
+// 头像裁剪对话框
 @Composable
 fun AvatarCropDialog(
     imageUri: Uri,
@@ -1057,8 +856,6 @@ fun AvatarCropDialog(
     val context = LocalContext.current
     var loadedBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var cropScale by remember { mutableStateOf(1f) }
-    var cropOffsetX by remember { mutableStateOf(0f) }
-    var cropOffsetY by remember { mutableStateOf(0f) }
 
     LaunchedEffect(imageUri) {
         try {
@@ -1066,7 +863,7 @@ fun AvatarCropDialog(
             loadedBitmap = BitmapFactory.decodeStream(inputStream)
             inputStream?.close()
         } catch (e: Exception) {
-            Log.e("AvatarCropDialog", "❌ 加载图片失败", e)
+            Log.e("AvatarCropDialog", "Failed to load image", e)
         }
     }
 
@@ -1080,9 +877,7 @@ fun AvatarCropDialog(
             ) {
                 loadedBitmap?.let { bitmap ->
                     Box(
-                        modifier = Modifier
-                            .size(200.dp)
-                            .clip(CircleShape),
+                        modifier = Modifier.size(200.dp).clip(CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
                         val scaledBitmap = Bitmap.createScaledBitmap(
@@ -1093,13 +888,10 @@ fun AvatarCropDialog(
                         )
                         Image(
                             bitmap = scaledBitmap.asImageBitmap(),
-                            contentDescription = "头像预览",
-                            modifier = Modifier
-                                .size(200.dp)
-                                .clip(CircleShape)
+                            contentDescription = "Preview",
+                            modifier = Modifier.size(200.dp).clip(CircleShape)
                         )
                     }
-
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("调整大小", style = MaterialTheme.typography.bodySmall)
                         Slider(
@@ -1115,7 +907,6 @@ fun AvatarCropDialog(
                         )
                     }
                 } ?: CircularProgressIndicator()
-
                 Text(
                     text = "拖动滑块调整头像大小，确认后系统将自动裁剪为圆形",
                     style = MaterialTheme.typography.bodySmall,

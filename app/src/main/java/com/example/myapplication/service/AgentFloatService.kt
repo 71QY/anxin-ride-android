@@ -50,9 +50,8 @@ class AgentFloatService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        Log.d(TAG, " 悬浮窗服务 onCreate 被调用")
+        Log.d(TAG, " Float service onCreate called")
         
-        // ⭐ 关键修复：Android 8.0+ 必须启动前台服务，否则系统会静默杀死服务
         startForegroundService()
         
         createFloatWindow()
@@ -61,40 +60,38 @@ class AgentFloatService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         removeFloatWindow()
-        Log.d(TAG, "悬浮窗服务已销毁")
+        Log.d(TAG, "Float service destroyed")
     }
 
     override fun onBind(intent: Intent): IBinder? {
         return null
     }
 
-    // ⭐ 新增：启动前台服务（必须调用，否则 Android 8+ 会崩溃）
     private fun startForegroundService() {
         try {
             val channelId = "float_service_channel"
-            val channelName = "AI助手悬浮窗"
+            val channelName = "AI Assistant Float Window"
             val importance = NotificationManager.IMPORTANCE_LOW
             val channel = NotificationChannel(channelId, channelName, importance).apply {
-                description = "保持AI助手悬浮窗运行"
+                description = "Keep AI assistant float window running"
             }
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(channel)
 
             val notification: Notification = NotificationCompat.Builder(this, channelId)
-                .setContentTitle("AI助手")
-                .setContentText("悬浮窗正在后台运行")
-                .setSmallIcon(R.drawable.ic_launcher_foreground) // 使用应用图标
+                .setContentTitle("AI Assistant")
+                .setContentText("Float window is running in background")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
                 .setOngoing(true)
                 .build()
 
             startForeground(1001, notification)
-            Log.d(TAG, "✅ 已启动前台服务，系统将保持服务存活")
+            Log.d(TAG, "Foreground service started, system will keep service alive")
         } catch (e: Exception) {
-            Log.e(TAG, "❌ 启动前台服务失败", e)
+            Log.e(TAG, "Failed to start foreground service", e)
         }
     }
 
-    // ⭐ 新增：震动辅助函数
     private fun vibrate(milliseconds: Long) {
         try {
             val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -112,7 +109,7 @@ class AgentFloatService : Service() {
                 vibrator.vibrate(milliseconds)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "震动失败: ${e.message}")
+            Log.e(TAG, "Vibration failed: ${e.message}")
         }
     }
 
@@ -120,7 +117,7 @@ class AgentFloatService : Service() {
     private fun createFloatWindow() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             if (!Settings.canDrawOverlays(this)) {
-                Log.e(TAG, "没有悬浮窗权限，停止服务")
+                Log.e(TAG, "No overlay permission, stopping service")
                 stopSelf()
                 return
             }

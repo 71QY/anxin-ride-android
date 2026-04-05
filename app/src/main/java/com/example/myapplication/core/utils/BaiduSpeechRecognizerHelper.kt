@@ -59,24 +59,18 @@ class BaiduSpeechRecognizerHelper(
                         isListening = false
                     }
                     SpeechConstant.CALLBACK_EVENT_ASR_ERROR -> {
-                        Log.e(TAG, "❌ 语音识别错误: $params")
+                        Log.e(TAG, "Voice recognition error: $params")
                         
-                        // ⭐ 解析错误信息，提供更友好的提示
                         try {
                             val json = JSONObject(params ?: "{}")
                             val error = json.optInt("error", -1)
-                            val desc = json.optString("desc", "未知错误")
+                            val desc = json.optString("desc", "Unknown error")
                             
                             if (error == 4 || desc.contains("-3004")) {
-                                Log.e(TAG, "⚠️ 百度语音认证失败！请检查：")
-                                Log.e(TAG, "   1. gradle.properties 中的 baidu.app.id/api.key/secret.key 是否正确")
-                                Log.e(TAG, "   2. 百度智能云控制台中的应用是否启用")
-                                Log.e(TAG, "   3. 是否有足够的调用额度")
-                                Log.e(TAG, "   4. APP_ID/API_KEY/SECRET_KEY 是否匹配")
-                                Log.e(TAG, "💡 临时解决方案：切换到讯飞语音或重新配置百度语音密钥")
+                                Log.e(TAG, "Baidu voice authentication failed! Check configuration.")
                             }
                         } catch (e: Exception) {
-                            Log.e(TAG, "解析错误信息失败", e)
+                            Log.e(TAG, "Failed to parse error info", e)
                         }
                         
                         isListening = false
@@ -96,61 +90,55 @@ class BaiduSpeechRecognizerHelper(
     fun startListening() {
         try {
             if (isListening) {
-                Log.w(TAG, "⚠️ 正在识别中，忽略重复请求")
+                Log.w(TAG, "Recognition in progress, ignoring duplicate request")
                 return
             }
             
-            Log.d(TAG, "🎤 开始语音识别")
+            Log.d(TAG, "Starting voice recognition")
             
-            // ⭐ 验证配置
             if (appId.isBlank() || apiKey.isBlank() || secretKey.isBlank()) {
-                Log.e(TAG, "❌ 百度语音配置为空！请检查 gradle.properties")
-                onResult("配置错误：百度语音密钥未设置")
+                Log.e(TAG, "Baidu voice configuration is empty! Check gradle.properties")
+                onResult("Configuration error: Baidu voice keys not set")
                 return
             }
             
             // 组装识别参数（百度语音 SDK 要求在 start 时传入认证信息）
             val startParams = JSONObject().apply {
-                // ⭐ 认证信息（必须）
                 put(SpeechConstant.APP_ID, appId)
                 put(SpeechConstant.APP_KEY, apiKey)
                 put(SpeechConstant.SECRET, secretKey)
                 
-                // ⭐ 新增：包名验证（解决 -3004 错误）
                 put("package_name", context.packageName)
                 
                 // 识别参数
                 put(SpeechConstant.ACCEPT_AUDIO_VOLUME, false)
-                // ⭐ 百度语音 PID 参数（方言映射）
                 val pid = when (language) {
-                    "zh-CN" -> 1537    // 普通话
-                    "zh-HK" -> 1637    // 粤语
-                    "en-US" -> 1737    // 英语
-                    "zh-SICHUAN" -> 1837  // 四川话
+                    "zh-CN" -> 1537
+                    "zh-HK" -> 1637
+                    "en-US" -> 1737
+                    "zh-SICHUAN" -> 1837
                     else -> 1537
                 }
                 put(SpeechConstant.PID, pid)
-                Log.d(TAG, "🗣️ 语音识别语言: $language (PID=$pid)")
-                put(SpeechConstant.NLU, "enable")  // 启用语义理解
+                Log.d(TAG, "Voice recognition language: $language (PID=$pid)")
+                put(SpeechConstant.NLU, "enable")
                 
-                // ⭐ 新增：设置 VAD（语音活动检测）参数，避免过早结束
-                put(SpeechConstant.VAD_ENDPOINT_TIMEOUT, 3000)  // 静音3秒后结束
+                put(SpeechConstant.VAD_ENDPOINT_TIMEOUT, 3000)
             }
             
-            Log.d(TAG, "📤 发送识别请求")
-            Log.d(TAG, "   APP_ID: $appId")
-            Log.d(TAG, "   API_KEY: ${apiKey.take(8)}...")
-            Log.d(TAG, "   SECRET_KEY: ${secretKey.take(8)}...")
+            Log.d(TAG, "Sending recognition request")
+            Log.d(TAG, "   APP_ID: [HIDDEN]")
+            Log.d(TAG, "   API_KEY: [HIDDEN]")
+            Log.d(TAG, "   SECRET_KEY: [HIDDEN]")
             Log.d(TAG, "   PACKAGE_NAME: ${context.packageName}")
-            Log.d(TAG, "   完整参数 JSON: $startParams")
             
             // 开始识别
             eventManager?.send(SpeechConstant.ASR_START, startParams.toString(), null, 0, 0)
             isListening = true
             
-            Log.d(TAG, "✅ 语音识别已启动，请开始说话...")
+            Log.d(TAG, "Voice recognition started, please speak...")
         } catch (e: Exception) {
-            Log.e(TAG, "❌ 启动语音识别失败", e)
+            Log.e(TAG, "Failed to start voice recognition", e)
             isListening = false
             onResult("")
         }
@@ -161,11 +149,11 @@ class BaiduSpeechRecognizerHelper(
      */
     fun stopListening() {
         try {
-            Log.d(TAG, "⏹️ 停止语音识别")
+            Log.d(TAG, "Stopping voice recognition")
             eventManager?.send(SpeechConstant.ASR_STOP, null, null, 0, 0)
             isListening = false
         } catch (e: Exception) {
-            Log.e(TAG, "❌ 停止语音识别失败", e)
+            Log.e(TAG, "Failed to stop voice recognition", e)
         }
     }
     
@@ -174,11 +162,11 @@ class BaiduSpeechRecognizerHelper(
      */
     fun cancel() {
         try {
-            Log.d(TAG, "❌ 取消语音识别")
+            Log.d(TAG, "Cancelling voice recognition")
             eventManager?.send(SpeechConstant.ASR_CANCEL, null, null, 0, 0)
             isListening = false
         } catch (e: Exception) {
-            Log.e(TAG, "❌ 取消语音识别失败", e)
+            Log.e(TAG, "Failed to cancel voice recognition", e)
         }
     }
     
@@ -187,12 +175,12 @@ class BaiduSpeechRecognizerHelper(
      */
     fun destroy() {
         try {
-            Log.d(TAG, "🗑️ 销毁语音识别器")
+            Log.d(TAG, "Destroying voice recognizer")
             eventManager?.send(SpeechConstant.ASR_CANCEL, null, null, 0, 0)
             eventManager = null
             isListening = false
         } catch (e: Exception) {
-            Log.e(TAG, "❌ 销毁语音识别器失败", e)
+            Log.e(TAG, "Failed to destroy voice recognizer", e)
         }
     }
     
@@ -209,12 +197,12 @@ class BaiduSpeechRecognizerHelper(
             if (resultType == "partial_result") {
                 val bestResult = json.optString("best_result", "")
                 if (bestResult.isNotBlank()) {
-                    Log.d(TAG, " 部分结果: '$bestResult'")
+                    Log.d(TAG, "Partial result: '$bestResult'")
                     onPartialResult?.invoke(bestResult)
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "解析部分结果失败", e)
+            Log.e(TAG, "Failed to parse partial result", e)
         }
     }
     
@@ -223,7 +211,7 @@ class BaiduSpeechRecognizerHelper(
      */
     private fun handleFinalResult(params: String?) {
         if (params == null) {
-            Log.w(TAG, "⚠️ 识别结果为空 (params is null)")
+            Log.w(TAG, "Recognition result is empty (params is null)")
             onResult("")
             return
         }
@@ -234,15 +222,15 @@ class BaiduSpeechRecognizerHelper(
             
             if (error == 0) {
                 val bestResult = json.optString("best_result", "")
-                Log.d(TAG, "📥 最终识别结果: '$bestResult'")
+                Log.d(TAG, "Final recognition result: '$bestResult'")
                 onResult(bestResult)
             } else {
-                val errorMessage = json.optString("desc", "未知错误")
-                Log.e(TAG, "❌ 识别失败: $errorMessage (error=$error)")
+                val errorMessage = json.optString("desc", "Unknown error")
+                Log.e(TAG, "Recognition failed: $errorMessage (error=$error)")
                 onResult("")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "解析最终结果失败，原始内容: $params", e)
+            Log.e(TAG, "Failed to parse final result, raw content: $params", e)
             onResult("")
         }
     }
