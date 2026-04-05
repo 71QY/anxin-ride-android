@@ -9,11 +9,7 @@ import android.os.Build
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -31,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -70,8 +67,8 @@ fun ProfileScreen(
     var showPermissionDialog by remember { mutableStateOf(false) }
     var showAvatarCropDialog by remember { mutableStateOf(false) }
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
-    
-    // ⭐ 新增：控制各个折叠区域的状态
+
+    // 控制各个折叠区域的状态
     var showNicknameSection by remember { mutableStateOf(false) }
     var showPasswordSection by remember { mutableStateOf(false) }
     var showRealNameSection by remember { mutableStateOf(false) }
@@ -236,158 +233,148 @@ fun ProfileScreen(
             }
 
             item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color.White  // ⭐ 改为白色背景
-                    )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color.White
+                        )
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(100.dp)
-                                .clip(CircleShape)
-                                .clickable { pickImage() },
-                            contentAlignment = Alignment.Center
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            val avatarValue = profile?.avatar
-                            Log.d("ProfileScreen", "头像值: $avatarValue")
-                            // ⭐ 修改：处理头像 URL，支持多种格式
-                            val avatarUrl = if (!avatarValue.isNullOrBlank()) {
-                                val cleanUrl = avatarValue.trim()
-                                when {
-                                    cleanUrl.startsWith("http://") || cleanUrl.startsWith("https://") -> cleanUrl
-                                    cleanUrl.startsWith("/") -> "http://10.224.165.80:8080$cleanUrl"
-                                    else -> "http://10.224.165.80:8080/$cleanUrl"
-                                }
-                            } else null
-                            Log.d("ProfileScreen", "头像URL: $avatarUrl")
+                            Box(
+                                modifier = Modifier
+                                    .size(100.dp)
+                                    .clip(CircleShape)
+                                    .clickable { pickImage() },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                val avatarValue = profile?.avatar
+                                Log.d("ProfileScreen", "头像值: $avatarValue")
+                                val avatarUrl = if (!avatarValue.isNullOrBlank()) {
+                                    val cleanUrl = avatarValue.trim()
+                                    when {
+                                        cleanUrl.startsWith("http://") || cleanUrl.startsWith("https://") -> cleanUrl
+                                        cleanUrl.startsWith("/") -> "http://10.224.165.80:8080$cleanUrl"
+                                        else -> "http://10.224.165.80:8080/$cleanUrl"
+                                    }
+                                } else null
+                                Log.d("ProfileScreen", "头像URL: $avatarUrl")
 
-                            if (avatarUrl != null) {
-                                // ⭐ 修复：使用正确的图片加载方式，确保显示正常
-                                Box(
-                                    modifier = Modifier
-                                        .size(100.dp)
-                                        .clip(CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
+                                if (avatarUrl != null) {
                                     Image(
                                         painter = rememberAsyncImagePainter(
                                             model = ImageRequest.Builder(context)
                                                 .data(avatarUrl)
                                                 .crossfade(true)
-                                                .size(100, 100)  // ⭐ 指定尺寸
+                                                .size(200, 200)
+                                                .diskCachePolicy(coil.request.CachePolicy.ENABLED)
+                                                .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
                                                 .build()
                                         ),
                                         contentDescription = "头像",
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop  // ⭐ 裁剪填充
+                                        modifier = Modifier
+                                            .size(100.dp)
+                                            .clip(CircleShape),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.Person,
+                                        contentDescription = "默认头像",
+                                        modifier = Modifier
+                                            .size(100.dp)
+                                            .clip(CircleShape),
+                                        tint = MaterialTheme.colorScheme.primary
                                     )
                                 }
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Default.Person,
-                                    contentDescription = "默认头像",
-                                    modifier = Modifier
-                                        .size(100.dp)
-                                        .clip(CircleShape),
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
                             }
-                        }
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
 
-                        Text(
-                            text = "点击更换头像",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        
-                        // ⭐ 头像上传错误提示
-                        if (errorMessage?.contains("头像") == true || errorMessage?.contains("上传") == true) {
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.errorContainer
-                                )
-                            ) {
-                                Text(
-                                    text = "❌ $errorMessage",
-                                    modifier = Modifier.padding(8.dp),
-                                    color = MaterialTheme.colorScheme.onErrorContainer,
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                        }
-                        
-                        // ⭐ 头像上传成功提示
-                        if (successMessage?.contains("头像") == true) {
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                                )
-                            ) {
-                                Text(
-                                    text = "✅ $successMessage",
-                                    modifier = Modifier.padding(8.dp),
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        profile?.nickname?.let { nickname ->
                             Text(
-                                text = "昵称：$nickname",
-                                style = MaterialTheme.typography.bodyLarge,
+                                text = "点击更换头像",
+                                style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary
                             )
-                            Spacer(modifier = Modifier.height(4.dp))
-                        }
 
-                        Text(
-                            text = profile?.phone ?: "未登录",
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                            if (errorMessage?.contains("头像") == true || errorMessage?.contains("上传") == true) {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.errorContainer
+                                    )
+                                ) {
+                                    Text(
+                                        text = "❌ $errorMessage",
+                                        modifier = Modifier.padding(8.dp),
+                                        color = MaterialTheme.colorScheme.onErrorContainer,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
 
-                        Spacer(modifier = Modifier.height(4.dp))
+                            if (successMessage?.contains("头像") == true) {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                                    )
+                                ) {
+                                    Text(
+                                        text = "✅ $successMessage",
+                                        modifier = Modifier.padding(8.dp),
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
 
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            val verified = profile?.verified ?: 0
-                            Icon(
-                                imageVector = if (verified == 1) Icons.Default.CheckCircle else Icons.Default.Error,
-                                contentDescription = null,
-                                tint = if (verified == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            profile?.nickname?.let { nickname ->
+                                Text(
+                                    text = "昵称：$nickname",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                            }
+
                             Text(
-                                text = if (verified == 1) "已实名认证" else "未实名认证",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (verified == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                                text = profile?.phone ?: "未登录",
+                                style = MaterialTheme.typography.titleMedium
                             )
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                val verified = profile?.verified ?: 0
+                                Icon(
+                                    imageVector = if (verified == 1) Icons.Default.CheckCircle else Icons.Default.Error,
+                                    contentDescription = null,
+                                    tint = if (verified == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (verified == 1) "已实名认证" else "未实名认证",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (verified == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                                )
+                            }
                         }
                     }
-                }
-            }
-
-            item {
-                Button(
-                    onClick = onNavigateToOrderList,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !isOperationLoading
-                ) {
-                    Text("查看我的订单")
                 }
             }
 
@@ -396,7 +383,7 @@ fun ProfileScreen(
                     modifier = Modifier.fillMaxWidth(),
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = Color.White  // ⭐ 改为白色背景
+                        containerColor = Color.White
                     )
                 ) {
                     Column(
@@ -405,7 +392,6 @@ fun ProfileScreen(
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // ⭐ 标题栏（可点击）
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -432,9 +418,8 @@ fun ProfileScreen(
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        
-                        // ⭐ 折叠内容
-                        androidx.compose.animation.AnimatedVisibility(
+
+                        AnimatedVisibility(
                             visible = showNicknameSection,
                             enter = fadeIn() + expandVertically(),
                             exit = fadeOut() + shrinkVertically()
@@ -462,8 +447,7 @@ fun ProfileScreen(
                                     },
                                     isError = errorMessage?.contains("昵称") == true
                                 )
-                                
-                                // ⭐ 昵称错误提示
+
                                 if (errorMessage?.contains("昵称") == true) {
                                     Card(
                                         modifier = Modifier.fillMaxWidth(),
@@ -479,8 +463,7 @@ fun ProfileScreen(
                                         )
                                     }
                                 }
-                                
-                                // ⭐ 昵称成功提示
+
                                 if (successMessage?.contains("昵称") == true) {
                                     Card(
                                         modifier = Modifier.fillMaxWidth(),
@@ -496,7 +479,7 @@ fun ProfileScreen(
                                         )
                                     }
                                 }
-                                
+
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.End
@@ -526,7 +509,7 @@ fun ProfileScreen(
                     modifier = Modifier.fillMaxWidth(),
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = Color.White  // ⭐ 改为白色背景
+                        containerColor = Color.White
                     )
                 ) {
                     Column(
@@ -535,7 +518,6 @@ fun ProfileScreen(
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // ⭐ 标题栏（可点击）
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -562,9 +544,8 @@ fun ProfileScreen(
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        
-                        // ⭐ 折叠内容
-                        androidx.compose.animation.AnimatedVisibility(
+
+                        AnimatedVisibility(
                             visible = showPasswordSection,
                             enter = fadeIn() + expandVertically(),
                             exit = fadeOut() + shrinkVertically()
@@ -572,7 +553,6 @@ fun ProfileScreen(
                             Column(
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                // ⭐ 验证码输入框（带内置按钮）
                                 OutlinedTextField(
                                     value = codeInput,
                                     onValueChange = viewModel::updateCodeInput,
@@ -604,8 +584,7 @@ fun ProfileScreen(
                                     },
                                     isError = errorMessage?.contains("验证码") == true
                                 )
-                                
-                                // ⭐ 验证码错误提示
+
                                 if (errorMessage?.contains("验证码") == true) {
                                     Text(
                                         text = "❌ $errorMessage",
@@ -614,8 +593,7 @@ fun ProfileScreen(
                                         modifier = Modifier.padding(start = 16.dp)
                                     )
                                 }
-                                
-                                // ⭐ 验证码发送成功提示
+
                                 if (successMessage?.contains("验证码") == true) {
                                     Text(
                                         text = "✅ $successMessage",
@@ -624,8 +602,7 @@ fun ProfileScreen(
                                         modifier = Modifier.padding(start = 16.dp)
                                     )
                                 }
-                                
-                                // ⭐ 新密码输入框
+
                                 OutlinedTextField(
                                     value = newPasswordInput,
                                     onValueChange = viewModel::updateNewPasswordInput,
@@ -636,18 +613,16 @@ fun ProfileScreen(
                                     singleLine = true,
                                     isError = errorMessage?.contains("密码") == true
                                 )
-                                
-                                // ⭐ 密码格式提示
+
                                 Text(
                                     text = "💡 密码要求：至少 10 位，必须包含字母和特殊符号",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = if (errorMessage?.contains("密码") == true) 
-                                        MaterialTheme.colorScheme.error 
+                                    color = if (errorMessage?.contains("密码") == true)
+                                        MaterialTheme.colorScheme.error
                                     else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(start = 16.dp)
                                 )
-                                
-                                // ⭐ 密码错误提示
+
                                 if (errorMessage?.contains("密码") == true && !errorMessage!!.contains("验证码")) {
                                     Text(
                                         text = "❌ $errorMessage",
@@ -656,8 +631,7 @@ fun ProfileScreen(
                                         modifier = Modifier.padding(start = 16.dp)
                                     )
                                 }
-                                
-                                // ⭐ 成功提示
+
                                 if (successMessage?.contains("密码") == true) {
                                     Card(
                                         modifier = Modifier.fillMaxWidth(),
@@ -673,7 +647,7 @@ fun ProfileScreen(
                                         )
                                     }
                                 }
-                                
+
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.End
@@ -703,7 +677,7 @@ fun ProfileScreen(
                     modifier = Modifier.fillMaxWidth(),
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = Color.White  // ⭐ 改为白色背景
+                        containerColor = Color.White
                     )
                 ) {
                     Column(
@@ -712,7 +686,6 @@ fun ProfileScreen(
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // ⭐ 标题栏（可点击）
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -739,9 +712,8 @@ fun ProfileScreen(
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        
-                        // ⭐ 折叠内容
-                        androidx.compose.animation.AnimatedVisibility(
+
+                        AnimatedVisibility(
                             visible = showRealNameSection,
                             enter = fadeIn() + expandVertically(),
                             exit = fadeOut() + shrinkVertically()
@@ -770,8 +742,7 @@ fun ProfileScreen(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                
-                                // ⭐ 实名认证错误提示
+
                                 if (errorMessage?.contains("实名") == true || errorMessage?.contains("身份证") == true || errorMessage?.contains("姓名") == true) {
                                     Card(
                                         modifier = Modifier.fillMaxWidth(),
@@ -787,8 +758,7 @@ fun ProfileScreen(
                                         )
                                     }
                                 }
-                                
-                                // ⭐ 实名认证成功提示
+
                                 if (successMessage?.contains("实名") == true || successMessage?.contains("认证") == true) {
                                     Card(
                                         modifier = Modifier.fillMaxWidth(),
@@ -804,7 +774,7 @@ fun ProfileScreen(
                                         )
                                     }
                                 }
-                                
+
                                 Button(
                                     onClick = viewModel::submitRealNameAuth,
                                     enabled = !isOperationLoading && realNameInput.isNotBlank() && idCardInput.isNotBlank(),
@@ -827,7 +797,7 @@ fun ProfileScreen(
                     modifier = Modifier.fillMaxWidth(),
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = Color.White  // ⭐ 改为白色背景
+                        containerColor = Color.White
                     )
                 ) {
                     Column(
@@ -836,7 +806,6 @@ fun ProfileScreen(
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // ⭐ 标题栏（可点击）
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -844,18 +813,41 @@ fun ProfileScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "紧急联系人",
-                                style = MaterialTheme.typography.titleLarge
-                            )
-                            Icon(
-                                imageVector = if (showContactsSection) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                contentDescription = if (showContactsSection) "收起" else "展开"
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.ContactPhone,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "紧急联系人",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Button(
+                                    onClick = { showAddContactDialog = true },
+                                    enabled = !isOperationLoading
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Add,
+                                        contentDescription = "添加",
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("添加")
+                                }
+                                Icon(
+                                    imageVector = if (showContactsSection) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = if (showContactsSection) "收起" else "展开",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
-                        
-                        // ⭐ 折叠内容
-                        androidx.compose.animation.AnimatedVisibility(
+
+                        AnimatedVisibility(
                             visible = showContactsSection,
                             enter = fadeIn() + expandVertically(),
                             exit = fadeOut() + shrinkVertically()
@@ -863,38 +855,6 @@ fun ProfileScreen(
                             Column(
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = Icons.Default.ContactPhone,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = "紧急联系人",
-                                            style = MaterialTheme.typography.titleMedium
-                                        )
-                                    }
-                                    Button(
-                                        onClick = { showAddContactDialog = true },
-                                        enabled = !isOperationLoading
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Add,
-                                            contentDescription = "添加",
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("添加")
-                                    }
-                                }
-
                                 if (isContactsLoading) {
                                     Box(
                                         modifier = Modifier.fillMaxWidth(),
@@ -907,7 +867,7 @@ fun ProfileScreen(
                                         Card(
                                             modifier = Modifier.fillMaxWidth(),
                                             colors = CardDefaults.cardColors(
-                                                containerColor = Color.White  // ⭐ 改为白色背景
+                                                containerColor = Color.White
                                             )
                                         ) {
                                             Row(
@@ -964,7 +924,6 @@ fun ProfileScreen(
                 }
             }
 
-
             item {
                 if (showAddContactDialog) {
                     AddEmergencyContactDialog(
@@ -973,7 +932,6 @@ fun ProfileScreen(
                             viewModel.updateContactNameInput(name)
                             viewModel.updateContactPhoneInput(phone)
                             viewModel.addEmergencyContact()
-                            // ⭐ 不立即关闭对话框，等待结果显示
                         },
                         name = contactNameInput,
                         phone = contactPhoneInput,
@@ -983,8 +941,7 @@ fun ProfileScreen(
                         errorMessage = if (errorMessage?.contains("联系人") == true || errorMessage?.contains("姓名") == true || errorMessage?.contains("电话") == true) errorMessage else null,
                         successMessage = if (successMessage?.contains("联系人") == true || successMessage?.contains("添加") == true) successMessage else null
                     )
-                    
-                    // ⭐ 成功后自动关闭对话框
+
                     LaunchedEffect(successMessage) {
                         if (successMessage?.contains("联系人") == true || successMessage?.contains("添加") == true) {
                             showAddContactDialog = false
@@ -1041,8 +998,7 @@ fun AddEmergencyContactDialog(
                     singleLine = true,
                     isError = errorMessage?.contains("电话") == true || errorMessage?.contains("手机") == true
                 )
-                
-                // ⭐ 错误提示
+
                 if (errorMessage != null && (errorMessage.contains("联系人") || errorMessage.contains("姓名") || errorMessage.contains("电话") || errorMessage.contains("手机"))) {
                     Card(
                         colors = CardDefaults.cardColors(
@@ -1057,8 +1013,7 @@ fun AddEmergencyContactDialog(
                         )
                     }
                 }
-                
-                // ⭐ 成功提示
+
                 if (successMessage != null && (successMessage.contains("联系人") || successMessage.contains("添加"))) {
                     Card(
                         colors = CardDefaults.cardColors(
@@ -1124,7 +1079,6 @@ fun AvatarCropDialog(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 loadedBitmap?.let { bitmap ->
-                    // ⭐ 添加手动调整控件
                     Box(
                         modifier = Modifier
                             .size(200.dp)
@@ -1146,7 +1100,6 @@ fun AvatarCropDialog(
                         )
                     }
 
-                    // ⭐ 缩放滑块
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("调整大小", style = MaterialTheme.typography.bodySmall)
                         Slider(
@@ -1174,14 +1127,12 @@ fun AvatarCropDialog(
             Button(
                 onClick = {
                     loadedBitmap?.let { bitmap ->
-                        // ⭐ 创建缩放后的bitmap并裁剪为200x200
                         val scaledBitmap = Bitmap.createScaledBitmap(
                             bitmap,
                             (bitmap.width * cropScale).toInt(),
                             (bitmap.height * cropScale).toInt(),
                             true
                         )
-                        // 居中裁剪200x200
                         val centerX = (scaledBitmap.width - 200) / 2
                         val centerY = (scaledBitmap.height - 200) / 2
                         val croppedBitmap = Bitmap.createBitmap(

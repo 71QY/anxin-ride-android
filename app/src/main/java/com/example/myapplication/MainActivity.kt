@@ -428,21 +428,21 @@ fun MyApplicationApp(
                     }
                 }
                 "chat" -> {
-                    ChatScreen(
-                        viewModel = chatViewModel,
-                        onNavigateToOrder = onNavigateToOrderDetail,
-                        chatMode = ChatMode.AGENT
-                    )
-                }
-                "agent_chat" -> {
                     ChatListScreen(
                         onBackClick = { currentDestination = "home" },
                         onSessionSelected = { sessionId: String ->
                             // 会话选择逻辑
                         },
                         onNavigateToAgent = {
-                            currentDestination = "chat"
+                            currentDestination = "agent_chat"
                         }
+                    )
+                }
+                "agent_chat" -> {
+                    ChatScreen(
+                        viewModel = chatViewModel,
+                        onNavigateToOrder = onNavigateToOrderDetail,
+                        chatMode = ChatMode.AGENT
                     )
                 }
                 "profile" -> {

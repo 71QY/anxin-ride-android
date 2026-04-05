@@ -337,15 +337,23 @@ class ProfileViewModel @Inject constructor(
                     }
                     
                     if (!avatarUrl.isNullOrBlank()) {
-                        Log.d("ProfileViewModel", "✅ 头像上传成功：$avatarUrl")
+                        // ⭐ 新增：拼接完整 URL（如果后端返回的是相对路径）
+                        val fullUrl = if (avatarUrl.startsWith("http://") || avatarUrl.startsWith("https://")) {
+                            avatarUrl
+                        } else {
+                            // 使用你的后端 Base URL
+                            "http://10.224.165.80:8080$avatarUrl"
+                        }
+                        
+                        Log.d("ProfileViewModel", "✅ 头像上传成功，完整 URL：$fullUrl")
                         _successMessage.value = "头像上传成功"
                         
-                        // ⭐ 新增：直接更新本地头像，立即显示
+                        // ⭐ 关键：立即更新本地头像，立即显示
                         val currentProfile = _profile.value
                         if (currentProfile != null) {
-                            val updatedProfile = currentProfile.copy(avatar = avatarUrl)
-                            _profile.value = updatedProfile
-                            Log.d("ProfileViewModel", "✅ 本地头像已更新：$avatarUrl")
+                            val updatedProfile = currentProfile.copy(avatar = fullUrl)
+                            _profile.value = updatedProfile  // 触发 Compose 重组，界面立即刷新
+                            Log.d("ProfileViewModel", "✅ 本地头像已更新：$fullUrl")
                         }
                         
                         // ⭐ 重新加载个人资料，确保数据同步

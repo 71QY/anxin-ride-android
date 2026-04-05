@@ -8,7 +8,7 @@ import com.google.gson.annotations.SerializedName
 data class AvatarResponse(
     @SerializedName("code") val code: Int = 200,
     @SerializedName("message") val message: String? = null,
-    @SerializedName("data") val data: Any? = null  // ⭐ 修改：使用 Any? 兼容字符串和对象
+    @SerializedName("data") val data: String? = null  // ⭐ 修改：直接使用 String 类型，避免 Gson 反序列化异常
 )
 
 /**
