@@ -39,6 +39,7 @@ data class WebSocketRequest(
  * WebSocket 服务端返回的响应
  * ⭐ 新增：code 和 success 字段，与后端统一响应格式
  * ⭐ 修复：type 字段改为可选，兼容后端返回的简单消息
+ * ⭐ 新增：places 顶层字段，对齐图片识别 API v2.0
  */
 @OptIn(kotlinx.serialization.InternalSerializationApi::class)
 @Serializable
@@ -47,6 +48,7 @@ data class WebSocketResponse(
     val message: String = "",      // 文本消息
     val data: JsonElement? = null, // 数据（POI 列表等）
     val ocrText: String? = null,   // OCR 识别结果
+    val places: List<PoiResponse>? = null,  // ⭐ 新增：POI 列表顶层字段（图片识别 API v2.0）
     val currentLat: Double? = null,
     val currentLng: Double? = null,
     val preciseAddress: String? = null,

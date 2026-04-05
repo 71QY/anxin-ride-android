@@ -65,7 +65,7 @@ import com.example.myapplication.presentation.order.OrderDetailScreen
 import com.example.myapplication.presentation.order.OrderListScreen
 import com.example.myapplication.presentation.profile.ProfileScreen
 import com.example.myapplication.service.AgentFloatService
-import com.example.myapplication.ui.theme.MyApplicationTheme
+import com.example.myapplication.ui.theme.AnxinChuxingTheme
 import com.example.myapplication.debug.WebSocketDebugMonitor
 import com.iflytek.cloud.SpeechConstant
 import com.iflytek.cloud.SpeechUtility
@@ -111,7 +111,7 @@ class MainActivity : ComponentActivity() {
             enableEdgeToEdge()
 
             setContent {
-                MyApplicationTheme {
+                AnxinChuxingTheme {
                     val navController = rememberNavController()
                     val context = LocalContext.current
 
@@ -442,7 +442,7 @@ fun Greeting(name: String, modifier: Modifier = Modifier) {
 @Preview(showBackground = true)
 @Composable
 fun GreetingPreview() {
-    MyApplicationTheme {
+    AnxinChuxingTheme {
         Greeting("Android")
     }
 }

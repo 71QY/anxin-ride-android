@@ -551,10 +551,83 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    // ⭐ 修改：使用 HTTP API 方式发送并识别图片（WebSocket 缓冲区限制太严格）
+    // ⭐ 使用 WebSocket 方式发送并识别图片（后端推荐）
     fun sendImage(bitmap: Bitmap) {
-        Log.d("ChatViewModel", "=== 开始图片识别 (HTTP API) ===")
-        recognizeImageByHttp(bitmap)
+        Log.d("ChatViewModel", "=== 开始图片识别 (WebSocket) ===")
+        recognizeImageByWebSocket(bitmap)
+    }
+
+    // ⭐ 新增：WebSocket 方式图片识别（后端推荐）
+    private fun recognizeImageByWebSocket(bitmap: Bitmap) {
+        viewModelScope.launch {
+            // ⭐ 位置信息检查（必须参数）
+            if (currentLat == null || currentLng == null) {
+                addSystemMessage("🛰️ 正在获取您的位置...")
+                delay(3000)
+                if (currentLat == null || currentLng == null) {
+                    addSystemMessage("⚠️ 位置获取失败，请检查是否授予定位权限")
+                    return@launch
+                }
+            }
+            
+            Log.d("ChatViewModel", "=== 开始 WebSocket 图片识别 ===")
+            Log.d("ChatViewModel", "sessionId=${sessionId.value}")
+            Log.d("ChatViewModel", "lat=$currentLat, lng=$currentLng")
+            
+            // ⭐ 图片压缩（对齐后端要求：最大支持 10MB，建议压缩到 500KB - 1MB）
+            val base64 = withContext(Dispatchers.IO) {
+                compressAndToBase64(bitmap, maxSizeKB = 500)  // 500KB
+            }
+            
+            // ⭐ 发送前校验大小（最大 10MB）
+            val base64SizeKB = base64.length / 1024
+            if (base64SizeKB > 10240) {  // 10MB = 10240KB
+                Log.e("ChatViewModel", "❌ 图片压缩后仍然过大：${base64SizeKB}KB")
+                addSystemMessage("⚠️ 图片太大（超过 10MB），请重新选择更小的图片")
+                return@launch
+            }
+            
+            Log.d("ChatViewModel", "✅ 图片压缩成功：原始=${bitmap.byteCount / 1024}KB, 压缩后=${base64SizeKB}KB")
+            Log.d("ChatViewModel", "imageBase64 length=${base64.length}")
+
+            // ⭐ 显示用户发送的图片消息
+            val imageMessage = ChatMessage(
+                id = UUID.randomUUID().toString(),
+                content = "📷 [图片]",
+                isUser = true,
+                timestamp = System.currentTimeMillis(),
+                imageBase64 = base64
+            )
+            _messages.value += imageMessage
+
+            // ⭐ 构建 WebSocket 消息（对齐后端文档）
+            val imageRequest = JSONObject().apply {
+                put("type", "image")
+                put("sessionId", sessionId.value)
+                put("imageBase64", base64)
+                put("lat", currentLat!!)
+                put("lng", currentLng!!)
+            }
+            
+            Log.d("ChatViewModel", "发送 WebSocket 图片消息：type=image, sessionId=${sessionId.value}")
+            
+            // ⭐ 检查 WebSocket 连接状态并发送
+            if (webSocketClient.isConnected()) {
+                webSocketClient.sendRaw(imageRequest.toString())
+                Log.d("ChatViewModel", "✅ 图片消息已发送")
+            } else {
+                Log.e("ChatViewModel", "❌ WebSocket 未连接，尝试重连...")
+                reconnectWebSocket()
+                // ⭐ 延迟发送，等待重连
+                delay(2000)
+                if (webSocketClient.isConnected()) {
+                    webSocketClient.sendRaw(imageRequest.toString())
+                    Log.d("ChatViewModel", "✅ 重连后图片消息已发送")
+                } else {
+                    addSystemMessage("❌ 网络连接已断开，请检查网络")
+                }
+            }
+        }
     }
 
     // ⭐ 修改：HTTP 方式智能搜索目的地（主入口）- 带防抖和友好提示
@@ -1696,6 +1769,25 @@ class ChatViewModel @Inject constructor(
     // ⭐ 修改：从 places 字段提取 POI 列表（对齐后端文档）- 静默处理，不弹错误提示
     private fun extractPlaces(response: WebSocketResponse, rawJson: String? = null): List<PoiData> {
         return try {
+            // ⭐ 新增：优先从顶层 places 字段提取（图片识别 API v2.0）
+            if (response.places != null && response.places.isNotEmpty()) {
+                Log.d("ChatViewModel", "✅ 从顶层 places 字段提取到 ${response.places.size} 个 POI")
+                return response.places.map { poi ->
+                    PoiData(
+                        id = poi.id ?: "",
+                        name = poi.name ?: "",
+                        address = poi.address ?: "",
+                        lat = poi.lat,
+                        lng = poi.lng,
+                        distance = poi.distance,
+                        type = poi.type ?: "",
+                        duration = poi.duration,
+                        price = poi.price,
+                        score = poi.score
+                    )
+                }
+            }
+            
             // ⭐ 修改：优先从原始 JSON 消息中提取 places 字段（处理 FastJSON 引用格式）
             if (rawJson != null && rawJson.contains("\$ref")) {
                 Log.d("ChatViewModel", "🔍 检测到 JSON 引用格式，尝试从原始 JSON 提取 places")
