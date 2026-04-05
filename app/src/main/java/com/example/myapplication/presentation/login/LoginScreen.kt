@@ -50,15 +50,15 @@ fun LoginScreen(
     if (showLoginDialog) {
         AlertDialog(
             onDismissRequest = viewModel::dismissLoginDialog,
-            title = { Text("Login Successful") },
-            text = { Text("Welcome back!") },
+            title = { Text("登录成功") },
+            text = { Text("欢迎回来！") },
             confirmButton = {
                 Button(onClick = {
                     viewModel.dismissLoginDialog()
                     onRequestFloatPermission()
                     onLoginSuccess()
                 }) {
-                    Text("OK")
+                    Text("确定")
                 }
             }
         )
@@ -68,8 +68,8 @@ fun LoginScreen(
     if (showCodeSuccessDialog) {
         AlertDialog(
             onDismissRequest = viewModel::dismissCodeSuccessDialog,
-            title = { Text("Verification Code Sent") },
-            text = { Text("Verification code has been sent to your phone. Please check.") },
+            title = { Text("验证码已发送") },
+            text = { Text("验证码已发送至您的手机，请注意查收。") },
             confirmButton = {
                 Button(onClick = viewModel::dismissCodeSuccessDialog) {
                     Text("确定")
@@ -84,9 +84,9 @@ fun LoginScreen(
                 title = { 
                     Text(
                         text = when {
-                            isForgotPasswordMode -> "Reset Password"
-                            isRegisterMode -> "Register"
-                            else -> "Login"
+                            isForgotPasswordMode -> "重置密码"
+                            isRegisterMode -> "注册"
+                            else -> "登录"
                         }
                     )
                 },
@@ -95,7 +95,7 @@ fun LoginScreen(
                         IconButton(onClick = viewModel::goToPreviousStep) {
                             Icon(
                                 Icons.Default.ArrowBack,
-                                contentDescription = "Back"
+                                contentDescription = "返回"
                             )
                         }
                     }

@@ -118,7 +118,7 @@ class ProfileViewModel @Inject constructor(
         }
         
         if (token.isNullOrBlank()) {
-            Log.e("ProfileViewModel", "Token is empty")
+            Log.e("ProfileViewModel", "请先登录")
             return null
         }
         
@@ -134,7 +134,7 @@ class ProfileViewModel @Inject constructor(
             try {
                 val token = waitForToken()
                 if (token.isNullOrBlank()) {
-                    _errorMessage.value = "Please login first"
+                    _errorMessage.value = "请先登录"
                     _isProfileLoading.value = false
                     return@launch
                 }
@@ -158,7 +158,7 @@ class ProfileViewModel @Inject constructor(
                 
                 if (profileData == null) {
                     Log.e("ProfileViewModel", "Data parsing failed, JSON format may not match")
-                    _errorMessage.value = "Data format error, please contact administrator"
+                    _errorMessage.value = "数据格式错误，请联系管理员"
                     _isProfileLoading.value = false
                     return@launch
                 }
@@ -175,7 +175,7 @@ class ProfileViewModel @Inject constructor(
                     Log.d("ProfileViewModel", "  Verified status: verified=${profileData?.verified}")
                 } else {
                     Log.e("ProfileViewModel", "loadProfile failed: ${response.message}")
-                    _errorMessage.value = response.message ?: "Load failed"
+                    _errorMessage.value = response.message ?: "加载失败"
                 }
             } catch (e: Exception) {
                 Log.e("ProfileViewModel", "❌ loadProfile 异常", e)

@@ -308,11 +308,11 @@ fun MyApplicationApp(
                     icon = {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_home),
-                            contentDescription = "Home",
+                            contentDescription = "首页",
                             modifier = Modifier.size(24.dp)
                         )
                     },
-                    label = { Text("Home") }
+                    label = { Text("首页") }
                 )
                 NavigationBarItem(
                     selected = currentDestination == "favorites",
@@ -322,11 +322,11 @@ fun MyApplicationApp(
                     icon = {
                         Icon(
                             imageVector = Icons.Default.FavoriteBorder,
-                            contentDescription = "Favorites",
+                            contentDescription = "收藏",
                             modifier = Modifier.size(24.dp)
                         )
                     },
-                    label = { Text("Favorites") }
+                    label = { Text("收藏") }
                 )
                 NavigationBarItem(
                     selected = currentDestination == "chat",
@@ -336,11 +336,11 @@ fun MyApplicationApp(
                     icon = {
                         Icon(
                             imageVector = Icons.Default.Chat,
-                            contentDescription = "Chat",
+                            contentDescription = "对话",
                             modifier = Modifier.size(24.dp)
                         )
                     },
-                    label = { Text("Chat") }
+                    label = { Text("对话") }
                 )
                 NavigationBarItem(
                     selected = currentDestination == "profile",
@@ -350,11 +350,11 @@ fun MyApplicationApp(
                     icon = {
                         Icon(
                             painterResource(id = R.drawable.ic_account_box),
-                            contentDescription = "Profile",
+                            contentDescription = "我的",
                             modifier = Modifier.size(24.dp)
                         )
                     },
-                    label = { Text("Profile") }
+                    label = { Text("我的") }
                 )
             }
         }
@@ -386,13 +386,13 @@ fun MyApplicationApp(
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "No favorites yet",
+                            text = "暂无收藏",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Tap map to mark favorite locations",
+                            text = "点击地图标记常用地点",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

@@ -574,17 +574,19 @@ class ChatViewModel @Inject constructor(
             Log.d("ChatViewModel", "sessionId=${sessionId.value}")
             Log.d("ChatViewModel", "lat=$currentLat, lng=$currentLng")
             
-            // ⭐ 图片压缩（对齐后端要求：最大支持 10MB，建议压缩到 500KB - 1MB）
+            // ⭐ 图片压缩（对齐后端要求：最大支持 10MB，建议压缩到 800KB - 1MB）
             val base64 = withContext(Dispatchers.IO) {
-                compressAndToBase64(bitmap, maxSizeKB = 500)  // 500KB
+                compressAndToBase64(bitmap, maxSizeKB = 800)  // 800KB，平衡清晰度和速度
             }
             
-            // ⭐ 发送前校验大小（最大 10MB）
+            // ⭐ 发送前校验大小（后端限制：10MB = 10240KB）
             val base64SizeKB = base64.length / 1024
             if (base64SizeKB > 10240) {  // 10MB = 10240KB
                 Log.e("ChatViewModel", "❌ 图片压缩后仍然过大：${base64SizeKB}KB")
                 addSystemMessage("⚠️ 图片太大（超过 10MB），请重新选择更小的图片")
                 return@launch
+            } else if (base64SizeKB > 3072) {
+                Log.w("ChatViewModel", "⚠️ 图片较大：${base64SizeKB}KB，可能影响识别速度")
             }
             
             Log.d("ChatViewModel", "✅ 图片压缩成功：原始=${bitmap.byteCount / 1024}KB, 压缩后=${base64SizeKB}KB")
@@ -604,7 +606,7 @@ class ChatViewModel @Inject constructor(
             val imageRequest = JSONObject().apply {
                 put("type", "image")
                 put("sessionId", sessionId.value)
-                put("imageBase64", base64)
+                put("imageBase64", base64)  // ⭐ Base64已包含 data:image/jpeg;base64, 前缀
                 put("lat", currentLat!!)
                 put("lng", currentLng!!)
             }
@@ -950,12 +952,12 @@ class ChatViewModel @Inject constructor(
             Log.d("ChatViewModel", "sessionId=${sessionId.value}")
             Log.d("ChatViewModel", "lat=$currentLat, lng=$currentLng")
             
-            // ⭐ 图片压缩（对齐后端要求：最大支持 10MB，建议压缩到 3MB 以内）
+            // ⭐ 图片压缩（对齐后端要求：最大支持 10MB，建议压缩到 800KB - 1MB）
             val base64 = withContext(Dispatchers.IO) {
-                compressAndToBase64(bitmap, maxSizeKB = 3072)  // 3MB = 3072KB
+                compressAndToBase64(bitmap, maxSizeKB = 800)  // 800KB，平衡清晰度和速度
             }
             
-            // ⭐ 发送前校验大小（最大 10MB）
+            // ⭐ 发送前校验大小（后端限制：10MB = 10240KB）
             val base64SizeKB = base64.length / 1024
             if (base64SizeKB > 10240) {  // 10MB = 10240KB
                 Log.e("ChatViewModel", "❌ 图片压缩后仍然过大：${base64SizeKB}KB")
@@ -1109,10 +1111,34 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    // ⭐ 新增：处理 IMAGE_RECOGNITION 响应（旧版本兼容）
+    // ⭐ 新增：处理 IMAGE_RECOGNITION 响应（对齐后端文档）
     private fun handleImageRecognitionResponse(data: AgentSearchResponse) {
-        val places = data.places ?: data.candidates ?: emptyList()
-        Log.d("ChatViewModel", "📸 IMAGE_RECOGNITION 类型，places count=${places.size}")
+        Log.d("ChatViewModel", "📸 IMAGE_RECOGNITION 类型")
+        
+        // ⭐ 检查是否直接返回订单信息
+        val orderInfo = data.data?.order
+        if (orderInfo != null) {
+            Log.d("ChatViewModel", "🚀 图片识别直接下单，orderId=${orderInfo.orderId}")
+            addSystemMessage(data.message ?: "✅ 已确认目的地，正在创建订单...")
+            
+            // ⭐ 直接创建订单
+            createOrder(
+                poiName = orderInfo.destName ?: "未知位置",
+                poiLat = orderInfo.destLat ?: 0.0,
+                poiLng = orderInfo.destLng ?: 0.0,
+                passengerCount = 1,
+                remark = null
+            )
+            return
+        }
+        
+        // ⭐ 优先从嵌套的 data.data.places 获取，其次从顶层 data.places 获取
+        val nestedPlaces = data.data?.places
+        val topLevelPlaces = data.places ?: data.candidates
+        val places = nestedPlaces ?: topLevelPlaces ?: emptyList()
+        
+        Log.d("ChatViewModel", "nested places count=${nestedPlaces?.size}, top-level places count=${topLevelPlaces?.size}")
+        Log.d("ChatViewModel", "最终 places count=${places.size}")
         
         if (places.isNotEmpty()) {
             _poiList.value = places.map {
@@ -1145,6 +1171,20 @@ class ChatViewModel @Inject constructor(
             }
             
             speak("找到 ${places.size} 个相关地点")
+            
+            // ⭐ 重要：调用搜索接口保存会话状态，让后端知道已经搜索过
+            viewModelScope.launch {
+                val firstPlace = places.firstOrNull()
+                if (firstPlace != null && currentLat != null && currentLng != null) {
+                    Log.d("ChatViewModel", "🔄 调用搜索接口保存会话状态：${firstPlace.name}")
+                    agentRepository.searchDestination(
+                        sessionId = sessionId.value,
+                        keyword = firstPlace.name,
+                        lat = currentLat!!,
+                        lng = currentLng!!
+                    )
+                }
+            }
         } else {
             val errorMsg = if (!data.message.isNullOrBlank()) {
                 "😕 ${data.message}\n\n💡 建议：\n• 确保图片清晰，光线充足\n• 拍摄招牌、路牌等包含地址的文字\n• 尝试拍摄更近的视角"
@@ -1404,8 +1444,7 @@ class ChatViewModel @Inject constructor(
             
             // ⭐ 特殊处理：图片识别响应（支持 type=image_recognition）
             val isImageRecognition = response.type?.uppercase() == "IMAGE_RECOGNITION" ||
-                                     json.contains("ocrText") || 
-                                     (json.contains("success") && response.success != null)
+                                     response.type?.uppercase() == "IMAGE"
             
             when {
                 isImageRecognition -> {
@@ -1414,13 +1453,14 @@ class ChatViewModel @Inject constructor(
                     Log.d("ChatViewModel", "type=${response.type}, success=${response.success}, message=${response.message}")
                     Log.d("ChatViewModel", "data=${response.data}")
                     
-                    // ⭐ 检查是否识别失败（message 中包含 "失败" 或 "异常"）
-                    val isErrorMessage = response.message?.contains("失败") == true || 
-                                         response.message?.contains("异常") == true ||
-                                         response.message?.contains("Cannot invoke") == true ||
-                                         response.message?.contains("null") == true
+                    // ⭐ 检查是否识别失败（优先检查 success 字段）
+                    val isSuccess = response.success == true
+                    val hasErrorMessage = response.message?.let { msg ->
+                        msg.contains("失败") || msg.contains("异常") || 
+                        msg.contains("Cannot invoke") || msg.contains("null pointer")
+                    } ?: false
                     
-                    if (response.success == true && !isErrorMessage) {
+                    if (isSuccess && !hasErrorMessage) {
                         // ⭐ 成功：解析 OCR 文本和 POI 列表
                         val ocrText = response.ocrText ?: response.message ?: ""
                         Log.d("ChatViewModel", "OCR 文本: $ocrText")
@@ -1592,6 +1632,9 @@ class ChatViewModel @Inject constructor(
                         Log.e("ChatViewModel", "❌ 提取订单信息失败", e)
                         addSystemMessage("⚠️ 订单数据处理失败：${e.message}")
                     }
+                    
+                    // ⭐ 重要：ORDER 类型处理完成后直接返回，避免进入 else 分支
+                    return
                 }
                 
                 response.type?.uppercase() == "ROUTE" -> {

@@ -60,12 +60,40 @@ data class AgentCleanupRequest(
 @Serializable
 data class AgentSearchResponse(
     @SerialName("type") val type: String? = null,          // SEARCH / ORDER / CHAT / IMAGE_RECOGNITION
+    @SerialName("success") val success: Boolean? = null,   // ⭐ 新增：是否成功
     @SerialName("message") val message: String? = null,
-    @SerialName("places") val places: List<PoiResponse>? = null,
+    @SerialName("places") val places: List<PoiResponse>? = null,  // ⭐ 顶层 places
     @SerialName("candidates") val candidates: List<PoiResponse>? = null,
     @SerialName("needConfirm") val needConfirm: Boolean = false,
     @SerialName("poi") val poi: PoiResponse? = null,
-    @SerialName("route") val route: RouteInfo? = null
+    @SerialName("route") val route: RouteInfo? = null,
+    @SerialName("data") val data: ImageRecognitionData? = null  // ⭐ 新增：嵌套的 data 对象（图片识别专用）
+)
+
+/**
+ * 图片识别嵌套数据（对齐后端文档 data.data 结构）
+ */
+@Serializable
+data class ImageRecognitionData(
+    @SerialName("ocrText") val ocrText: String? = null,     // OCR 识别的文字
+    @SerialName("places") val places: List<PoiResponse>? = null,  // 候选地点列表
+    @SerialName("order") val order: OrderInfo? = null,      // 订单信息（如果直接下单）
+    @SerialName("message") val message: String? = null      // 提示信息
+)
+
+/**
+ * 订单信息（图片识别直接下单时返回）
+ */
+@Serializable
+data class OrderInfo(
+    @SerialName("orderId") val orderId: Long? = null,
+    @SerialName("orderNo") val orderNo: String? = null,
+    @SerialName("destName") val destName: String? = null,
+    @SerialName("destLat") val destLat: Double? = null,
+    @SerialName("destLng") val destLng: Double? = null,
+    @SerialName("distance") val distance: Double? = null,
+    @SerialName("duration") val duration: Int? = null,
+    @SerialName("price") val price: Double? = null
 )
 
 /**
