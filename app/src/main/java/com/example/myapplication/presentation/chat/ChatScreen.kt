@@ -1,25 +1,33 @@
 package com.example.myapplication.presentation.chat
 
 import android.Manifest
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState  // ⭐ 新增
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight  // ⭐ 新增：用于字体粗细
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration  // ⭐ 新增：用于机型自适应
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight  // ⭐ 新增：用于字体粗细
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -89,6 +97,10 @@ fun ChatScreen(
     val lazyListState = rememberLazyListState()
 
     var showImagePickerDialog by remember { mutableStateOf(false) }
+    
+    // ⭐ 新增：查看大图对话框状态
+    var showImageDialog by remember { mutableStateOf(false) }
+    var selectedImageBase64 by remember { mutableStateOf<String?>(null) }
 
     val audioPermissionState = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
     val cameraPermissionState = rememberPermissionState(Manifest.permission.CAMERA)
@@ -313,6 +325,17 @@ fun ChatScreen(
             viewModel.resetOrderState()
         }
     }
+    
+    // ⭐ 新增：大图查看对话框
+    if (showImageDialog) {
+        ImageDialog(
+            imageBase64 = selectedImageBase64,
+            onDismiss = {
+                showImageDialog = false
+                selectedImageBase64 = null
+            }
+        )
+    }
 
     Column(
         modifier = Modifier.fillMaxSize()
@@ -389,7 +412,11 @@ fun ChatScreen(
                 ChatBubble(
                     message = msg,
                     poiList = poiList,  // ⭐ 新增
-                    onCreateOrder = { destAddress, lat, lng -> viewModel.createOrderViaWebSocket(destAddress, lat, lng) }  // ⭐ 修改
+                    onCreateOrder = { destAddress, lat, lng -> viewModel.createOrderViaWebSocket(destAddress, lat, lng) },  // ⭐ 修改
+                    onImageClick = { imageBase64 ->  // ⭐ 新增：图片点击回调
+                        selectedImageBase64 = imageBase64
+                        showImageDialog = true
+                    }
                 )
             }
         }
@@ -496,7 +523,8 @@ fun ChatScreen(
 fun ChatBubble(
     message: ChatMessage,
     poiList: List<PoiData>,  // ⭐ 新增：传入 POI 列表
-    onCreateOrder: (String, Double, Double) -> Unit  // ⭐ 修改：接受经纬度和地址
+    onCreateOrder: (String, Double, Double) -> Unit,  // ⭐ 修改：接受经纬度和地址
+    onImageClick: (String) -> Unit  // ⭐ 新增：图片点击回调
 ) {
     Column(
         modifier = Modifier
@@ -517,9 +545,9 @@ fun ChatBubble(
         Card(
             colors = CardDefaults.cardColors(
                 containerColor = if (message.isUser) {
-                    MaterialTheme.colorScheme.primary
+                    Color.White  // ⭐ 用户消息：白色背景
                 } else {
-                    MaterialTheme.colorScheme.surfaceVariant
+                    MaterialTheme.colorScheme.primary  // ⭐ AI消息：深色背景（主题色）
                 }
             ),
             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -530,19 +558,53 @@ fun ChatBubble(
                 // ⭐ 显示消息内容
                 Text(
                     text = message.content,
-                    color = if (message.isUser) Color.White else Color.Black,
+                    color = if (message.isUser) Color.Black else Color.White,  // ⭐ 用户消息黑色字体，AI消息白色字体
                     style = MaterialTheme.typography.bodyLarge
                 )
                 
                 // ⭐ 如果有图片，显示图片
                 if (!message.imageBase64.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(8.dp))
-                    // TODO: 这里可以添加 Base64 解码显示图片的逻辑
-                    Text(
-                        text = "📷 [图片]",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (message.isUser) Color.White.copy(alpha = 0.7f) else Color.Black.copy(alpha = 0.7f)
-                    )
+                    
+                    // ⭐ 解码并显示 Base64 图片
+                    val bitmap = remember(message.imageBase64) {
+                        try {
+                            // 移除 data:image/jpeg;base64, 前缀（如果存在）
+                            val base64Data = if (message.imageBase64.contains(",")) {
+                                message.imageBase64.substringAfter(",")
+                            } else {
+                                message.imageBase64
+                            }
+                            
+                            val imageBytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
+                            android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+                        } catch (e: Exception) {
+                            Log.e("ChatScreen", "❌ 图片解码失败: ${e.message}")
+                            null
+                        }
+                    }
+                    
+                    if (bitmap != null) {
+                        // ⭐ 添加点击事件，支持查看大图
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = "发送的图片（点击查看大图）",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 300.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    onImageClick(message.imageBase64!!)  // ⭐ 使用回调函数
+                                },
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        Text(
+                            text = "⚠️ 图片加载失败",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Red
+                        )
+                    }
                 }
             }
         }
@@ -609,4 +671,64 @@ fun getStatusText(status: Int): String {
         4 -> "已取消"
         else -> "未知状态 ($status)"
     }
+}
+
+// ⭐ 新增：大图查看对话框
+@Composable
+fun ImageDialog(
+    imageBase64: String?,
+    onDismiss: () -> Unit
+) {
+    if (imageBase64 == null) return
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("查看图片") },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // 解码并显示图片
+                val bitmap = remember(imageBase64) {
+                    try {
+                        val base64Data = if (imageBase64.contains(",")) {
+                            imageBase64.substringAfter(",")
+                        } else {
+                            imageBase64
+                        }
+                        
+                        val imageBytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
+                        android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+                    } catch (e: Exception) {
+                        Log.e("ImageDialog", "❌ 图片解码失败: ${e.message}")
+                        null
+                    }
+                }
+                
+                if (bitmap != null) {
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = "大图",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 500.dp)  // ⭐ 更大的最大高度
+                            .clip(RoundedCornerShape(8.dp)),
+                        contentScale = ContentScale.Fit  // ⭐ 使用 Fit 保持完整显示
+                    )
+                } else {
+                    Text(
+                        text = "⚠️ 图片加载失败",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = Color.Red
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭")
+            }
+        }
+    )
 }

@@ -102,12 +102,22 @@ class BaiduSpeechRecognizerHelper(
             
             Log.d(TAG, "🎤 开始语音识别")
             
+            // ⭐ 验证配置
+            if (appId.isBlank() || apiKey.isBlank() || secretKey.isBlank()) {
+                Log.e(TAG, "❌ 百度语音配置为空！请检查 gradle.properties")
+                onResult("配置错误：百度语音密钥未设置")
+                return
+            }
+            
             // 组装识别参数（百度语音 SDK 要求在 start 时传入认证信息）
             val startParams = JSONObject().apply {
                 // ⭐ 认证信息（必须）
                 put(SpeechConstant.APP_ID, appId)
                 put(SpeechConstant.APP_KEY, apiKey)
                 put(SpeechConstant.SECRET, secretKey)
+                
+                // ⭐ 新增：包名验证（解决 -3004 错误）
+                put("package_name", context.packageName)
                 
                 // 识别参数
                 put(SpeechConstant.ACCEPT_AUDIO_VOLUME, false)
@@ -122,6 +132,9 @@ class BaiduSpeechRecognizerHelper(
                 put(SpeechConstant.PID, pid)
                 Log.d(TAG, "🗣️ 语音识别语言: $language (PID=$pid)")
                 put(SpeechConstant.NLU, "enable")  // 启用语义理解
+                
+                // ⭐ 新增：设置 VAD（语音活动检测）参数，避免过早结束
+                put(SpeechConstant.VAD_ENDPOINT_TIMEOUT, 3000)  // 静音3秒后结束
             }
             
             Log.d(TAG, "📤 发送识别请求")

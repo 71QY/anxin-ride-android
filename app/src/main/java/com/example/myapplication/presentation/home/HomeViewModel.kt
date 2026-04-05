@@ -325,6 +325,12 @@
             _currentLocation.value = LatLng(lat, lng)
         }
     
+        // ⭐ 新增：更新定位精度
+        fun updateLocationAccuracy(accuracy: Float) {
+            _locationAccuracy.value = accuracy
+            Log.d("HomeViewModel", "📍 定位精度更新：±${accuracy}m")
+        }
+    
         fun onMapClick(latLng: LatLng) {
             Log.d("HomeViewModel", "onMapClick called, latLng=$latLng")
             _clickedLocation.value = latLng

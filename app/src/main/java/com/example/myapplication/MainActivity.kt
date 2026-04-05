@@ -199,18 +199,6 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         composable("chat") {
-                            ChatListScreen(
-                                onBackClick = { navController.popBackStack() },
-                                onSessionSelected = { sessionId: String ->
-                                    Log.d(TAG, "选择会话: $sessionId")
-                                },
-                                onNavigateToAgent = {
-                                    navController.navigate("agent_chat")
-                                }
-                            )
-                        }
-                        // ⭐ 新增：智能体聊天页面
-                        composable("agent_chat") {
                             ChatScreen(
                                 viewModel = chatViewModel,
                                 onNavigateToOrder = { orderId: Long ->
@@ -221,6 +209,18 @@ class MainActivity : ComponentActivity() {
                                     }
                                 },
                                 chatMode = ChatMode.AGENT
+                            )
+                        }
+                        // ⭐ 新增：聊天列表页面
+                        composable("agent_chat") {
+                            ChatListScreen(
+                                onBackClick = { navController.popBackStack() },
+                                onSessionSelected = { sessionId: String ->
+                                    Log.d(TAG, "选择会话: $sessionId")
+                                },
+                                onNavigateToAgent = {
+                                    navController.navigate("chat")
+                                }
                             )
                         }
                     }
@@ -290,8 +290,38 @@ fun MyApplicationApp(
     // ⭐ 新增：每次切换到主页时刷新定位
     LaunchedEffect(currentDestination) {
         if (currentDestination == "home") {
-            Log.d("MyApplicationApp", "🔄 返回主页")
-            // ⭐ 修改：使用高德地图自带定位，不需要手动启动
+            Log.d("MyApplicationApp", "🔄 返回主页，检查位置状态")
+            
+            // ⭐ 修改：检查当前位置是否有效，如果无效则等待定位完成
+            var currentLoc = homeViewModel.currentLocation.value
+            
+            // 如果位置无效，等待最多 5 秒让高德地图完成定位
+            if (currentLoc == null || currentLoc.latitude == 0.0 || currentLoc.longitude == 0.0) {
+                Log.w("MyApplicationApp", "⚠️ 当前位置无效，等待高德地图定位...")
+                
+                // 轮询等待位置更新（最多等 5 秒）
+                var waitCount = 0
+                while (waitCount < 50) {  // 50 * 100ms = 5 秒
+                    delay(100)
+                    currentLoc = homeViewModel.currentLocation.value
+                    if (currentLoc != null && currentLoc.latitude != 0.0 && currentLoc.longitude != 0.0) {
+                        Log.d("MyApplicationApp", "✅ 定位成功：lat=${currentLoc.latitude}, lng=${currentLoc.longitude}")
+                        break
+                    }
+                    waitCount++
+                }
+                
+                if (currentLoc == null || currentLoc.latitude == 0.0 || currentLoc.longitude == 0.0) {
+                    Log.e("MyApplicationApp", "❌ 定位超时，请检查定位权限")
+                    return@LaunchedEffect
+                }
+            } else {
+                Log.d("MyApplicationApp", "✅ 当前位置有效：lat=${currentLoc.latitude}, lng=${currentLoc.longitude}")
+            }
+            
+            // ⭐ 确保 ChatViewModel 收到最新位置
+            chatViewModel.syncLocationFromHome(currentLoc.latitude, currentLoc.longitude)
+            Log.d("MyApplicationApp", "📍 位置已同步到 ChatViewModel")
         }
     }
 
@@ -398,21 +428,21 @@ fun MyApplicationApp(
                     }
                 }
                 "chat" -> {
+                    ChatScreen(
+                        viewModel = chatViewModel,
+                        onNavigateToOrder = onNavigateToOrderDetail,
+                        chatMode = ChatMode.AGENT
+                    )
+                }
+                "agent_chat" -> {
                     ChatListScreen(
                         onBackClick = { currentDestination = "home" },
                         onSessionSelected = { sessionId: String ->
                             // 会话选择逻辑
                         },
                         onNavigateToAgent = {
-                            currentDestination = "agent_chat"
+                            currentDestination = "chat"
                         }
-                    )
-                }
-                "agent_chat" -> {
-                    ChatScreen(
-                        viewModel = chatViewModel,
-                        onNavigateToOrder = onNavigateToOrderDetail,
-                        chatMode = ChatMode.AGENT
                     )
                 }
                 "profile" -> {

@@ -303,7 +303,7 @@ class ProfileViewModel @Inject constructor(
                 
                 val requestBody = compressedFile.asRequestBody("image/jpeg".toMediaTypeOrNull())
                 val filePart = MultipartBody.Part.createFormData(
-                    "avatarFile",
+                    "avatar",
                     compressedFile.name,
                     requestBody
                 )
@@ -311,11 +311,49 @@ class ProfileViewModel @Inject constructor(
                 Log.d("ProfileViewModel", "开始上传头像，文件大小：${compressedFile.length() / 1024}KB")
                 
                 val response = api.uploadAvatar(filePart)
-                Log.d("ProfileViewModel", "uploadAvatar response: $response")
+                Log.d("ProfileViewModel", "uploadAvatar response: code=${response.code}, message=${response.message}")
                 
                 if (response.isSuccess()) {
-                    _successMessage.value = "头像上传成功"
-                    loadProfile()
+                    // ⭐ 修改：处理后端返回的数据（兼容字符串和对象）
+                    val dataObj: Any? = response.data
+                    val avatarUrl: String? = when {
+                        dataObj is String -> {
+                            // 如果 data 是字符串，直接作为 URL
+                            Log.d("ProfileViewModel", "✅ data 是字符串: $dataObj")
+                            dataObj
+                        }
+                        dataObj is Map<*, *> -> {
+                            // 如果 data 是对象，提取 avatarUrl 字段
+                            @Suppress("UNCHECKED_CAST")
+                            val dataMap = dataObj as? Map<String, Any>
+                            val url = dataMap?.get("avatarUrl") as? String
+                            Log.d("ProfileViewModel", "✅ data 是对象，avatarUrl: $url")
+                            url
+                        }
+                        else -> {
+                            Log.e("ProfileViewModel", "❌ data 类型未知: ${dataObj?.javaClass}")
+                            null
+                        }
+                    }
+                    
+                    if (!avatarUrl.isNullOrBlank()) {
+                        Log.d("ProfileViewModel", "✅ 头像上传成功：$avatarUrl")
+                        _successMessage.value = "头像上传成功"
+                        
+                        // ⭐ 新增：直接更新本地头像，立即显示
+                        val currentProfile = _profile.value
+                        if (currentProfile != null) {
+                            val updatedProfile = currentProfile.copy(avatar = avatarUrl)
+                            _profile.value = updatedProfile
+                            Log.d("ProfileViewModel", "✅ 本地头像已更新：$avatarUrl")
+                        }
+                        
+                        // ⭐ 重新加载个人资料，确保数据同步
+                        loadProfile()
+                    } else {
+                        Log.e("ProfileViewModel", "❌ 头像 URL 为空，data类型：${response.data?.javaClass}")
+                        _errorMessage.value = "上传失败：未获取到头像 URL"
+                    }
                 } else {
                     Log.e("ProfileViewModel", "❌ 头像上传失败：${response.message}")
                     _errorMessage.value = response.message ?: "上传失败"
@@ -423,7 +461,7 @@ class ProfileViewModel @Inject constructor(
                     verified = currentProfile.verified
                 )
                 
-                val response = api.updateNickname(updatedProfile)
+                val response = api.updateUserProfile(updatedProfile)  // ⭐ 修改：使用 updateUserProfile
                 Log.d("ProfileViewModel", "changeNickname response: $response")
                 if (response.isSuccess()) {
                     _successMessage.value = "昵称修改成功"

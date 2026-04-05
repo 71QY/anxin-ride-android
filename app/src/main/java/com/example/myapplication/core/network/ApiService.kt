@@ -172,14 +172,15 @@ interface ApiService {
     @PUT("user/profile")
     suspend fun updateUserProfile(@Body profile: UserProfile): Result<Unit>
 
-    @PUT("user/profile")
-    suspend fun updateNickname(@Body profile: UserProfile): Result<Unit>
-
     @Multipart
     @POST("user/avatar")
     suspend fun uploadAvatar(
         @Part avatar: MultipartBody.Part
     ): Result<AvatarResponse>
+
+    // ⭐ 新增：获取头像图片（不需要认证）
+    @GET("user/avatar/{filename}")
+    suspend fun getAvatar(@Path("filename") filename: String): okhttp3.ResponseBody
 
     @GET("user/emergency")
     suspend fun getEmergencyContacts(): Result<List<EmergencyContact>>

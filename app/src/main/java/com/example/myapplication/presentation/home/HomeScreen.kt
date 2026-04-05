@@ -408,20 +408,30 @@ fun HomeScreen(
                     Log.d("HomeScreen", "=== 地图初始化完成 ===")
                     aMapState.value = aMap
                     
-                    // ⭐ 启用高德地图自带定位（上一个版本的实现）
+                    // ⭐ 启用高德地图自带定位（优化精度配置）
                     val style = MyLocationStyle()
-                    style.myLocationType(MyLocationStyle.LOCATION_TYPE_SHOW)
-                    style.radiusFillColor(android.graphics.Color.argb(80, 0, 0, 255))
-                    style.strokeColor(android.graphics.Color.argb(255, 0, 0, 255))
-                    style.strokeWidth(2f)
+                    // ⭐ 修改：使用单次高精度定位模式，快速获取位置
+                    style.myLocationType(MyLocationStyle.LOCATION_TYPE_SHOW)  // ⭐ 修改：使用 LOCATION_TYPE_SHOW 替代不存在的常量
+                    // ⭐ 设置定位间隔为1秒（更快响应）
+                    style.interval(1000)
+                    // ⭐ 设置精度圈样式
+                    style.radiusFillColor(android.graphics.Color.argb(50, 0, 168, 255))
+                    style.strokeColor(android.graphics.Color.argb(200, 0, 168, 255))
+                    style.strokeWidth(3f)
+                    // ⭐ 显示定位按钮
+                    style.showMyLocation(true)
                     aMap.setMyLocationStyle(style)
                     aMap.isMyLocationEnabled = true
-                    Log.d("HomeScreen", "✅ 启用高德地图自带定位")
+                    Log.d("HomeScreen", "✅ 启用高德地图单次快速定位")
 
-                    // ⭐ 监听位置变化并更新 ViewModel
+                    // ⭐ 监听位置变化并更新 ViewModel（包含精度信息）
                     aMap.setOnMyLocationChangeListener { location ->
-                        Log.d("HomeScreen", "📍 位置变化：lat=${location.latitude}, lng=${location.longitude}")
+                        Log.d("HomeScreen", "📍 位置变化：lat=${location.latitude}, lng=${location.longitude}, accuracy=${location.accuracy}m, provider=${location.provider}")
                         viewModel.updateCurrentLocation(location.latitude, location.longitude)
+                        // ⭐ 新增：更新定位精度
+                        if (location.accuracy > 0) {
+                            viewModel.updateLocationAccuracy(location.accuracy)
+                        }
                     }
                 },
                 onMapClick = {
@@ -453,7 +463,7 @@ fun HomeScreen(
             Column(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(16.dp),
+                    .padding(top = 213.dp, end = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // ⭐ 智能体对话按钮
@@ -593,7 +603,10 @@ fun HomeScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 8.dp),
-                    shape = RoundedCornerShape(20.dp)
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color.White  // ⭐ 改为白色背景
+                    )
                 ) {
                     // ⭐ 修改：优化搜索框界面，支持自适应
                     Column(
@@ -834,7 +847,7 @@ fun HomeScreen(
                                         text = dialect.name,
                                         fontSize = 16.sp,
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Black
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White
                                     )
                                     if (isSelected) {
                                         Text(

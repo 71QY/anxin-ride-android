@@ -98,6 +98,25 @@ class ChatViewModel @Inject constructor(
     // ⭐ 新增：实时语音文本（用于显示正在识别的内容）
     private val _voiceInputText = MutableStateFlow("")
     val voiceInputText: StateFlow<String> = _voiceInputText.asStateFlow()
+    
+    // ⭐ 新增：方言选择（默认普通话）
+    private var _currentAccent = MutableStateFlow("mandarin")  // mandarin: 普通话
+    val currentAccent = _currentAccent.asStateFlow()
+    
+    // ⭐ 新增：支持的方言列表
+    data class DialectOption(val name: String, val language: String, val accent: String)
+    
+    val supportedDialects = listOf(
+        DialectOption("普通话", "zh_cn", "mandarin"),
+        DialectOption("粤语", "zh_cn", "cantonese"),
+        DialectOption("四川话", "zh_cn", "sichuan")
+    )
+    
+    // ⭐ 新增：切换方言
+    fun setDialect(accent: String) {
+        _currentAccent.value = accent
+        Log.d("ChatViewModel", "🌍 切换方言: accent=$accent")
+    }
 
     init {
         Log.d("ChatViewModel", "=== ChatViewModel 初始化开始 ===")
@@ -741,7 +760,7 @@ class ChatViewModel @Inject constructor(
                             Log.d("ChatViewModel", "✅ 自动选择评分最高的：${bestPlace.name}, score=${bestPlace.score}")
                             
                             // 显示系统消息
-                            addSystemMessage("📍 已为您找到：**${bestPlace.name}**\n⭐ 评分：${bestPlace.score ?: "N/A"}")
+                            addSystemMessage("📍 已为您找到：**${bestPlace.name}**")
                             
                             // ⭐ 延迟一点，让用户看到提示，然后自动确认
                             delay(800)
@@ -858,17 +877,19 @@ class ChatViewModel @Inject constructor(
             Log.d("ChatViewModel", "sessionId=${sessionId.value}")
             Log.d("ChatViewModel", "lat=$currentLat, lng=$currentLng")
             
-            // ⭐ 图片压缩（对齐后端要求：50KB 以内）
+            // ⭐ 图片压缩（对齐后端要求：最大支持 10MB，建议压缩到 3MB 以内）
             val base64 = withContext(Dispatchers.IO) {
-                compressAndToBase64(bitmap, maxSizeKB = 50)
+                compressAndToBase64(bitmap, maxSizeKB = 3072)  // 3MB = 3072KB
             }
             
-            // ⭐ 发送前校验大小
+            // ⭐ 发送前校验大小（最大 10MB）
             val base64SizeKB = base64.length / 1024
-            if (base64SizeKB > 50) {
+            if (base64SizeKB > 10240) {  // 10MB = 10240KB
                 Log.e("ChatViewModel", "❌ 图片压缩后仍然过大：${base64SizeKB}KB")
-                addSystemMessage("⚠️ 图片太大，请重新选择更小的图片")
+                addSystemMessage("⚠️ 图片太大（超过 10MB），请重新选择更小的图片")
                 return@launch
+            } else if (base64SizeKB > 3072) {
+                Log.w("ChatViewModel", "⚠️ 图片较大：${base64SizeKB}KB，可能影响识别速度")
             }
             
             Log.d("ChatViewModel", "✅ 图片压缩成功：原始=${bitmap.byteCount / 1024}KB, 压缩后=${base64SizeKB}KB")
@@ -893,98 +914,192 @@ class ChatViewModel @Inject constructor(
             )
             
             Log.d("ChatViewModel", "识别结果：code=${result.code}, message=${result.message}")
-            Log.d("ChatViewModel", "places count=${result.data?.places?.size}")
+            Log.d("ChatViewModel", "data type=${result.data?.type}, places count=${result.data?.places?.size ?: 0}")
 
-            if (result.isSuccess()) {
-                val response = result.data
-                if (response != null) {
+            // ⭐ 对齐后端标准响应格式
+            when (result.code) {
+                200 -> {
+                    // ✅ 成功响应
+                    val data = result.data
+                    if (data == null) {
+                        Log.e("ChatViewModel", "❌ code=200 但 data 为 null")
+                        addSystemMessage("❌ 服务器返回数据异常")
+                        return@launch
+                    }
+                    
                     Log.d("ChatViewModel", "=== 收到图片识别响应 ===")
-                    Log.d("ChatViewModel", "type=${response.type}, message=${response.message}")
+                    Log.d("ChatViewModel", "type=${data.type}, message=${data.message}")
+                    Log.d("ChatViewModel", "places=${data.places?.size ?: 0}, candidates=${data.candidates?.size ?: 0}")
                     
-                    // ⭐ 修复：处理 type 为 null 的情况
-                    val responseType = response.type?.uppercase() ?: "ERROR"
+                    // ⭐ 新增：打印完整的响应数据，便于调试
+                    if (data.places.isNullOrEmpty() && data.candidates.isNullOrEmpty()) {
+                        Log.w("ChatViewModel", "⚠️ 未识别到地点，原始消息：${data.message}")
+                        Log.w("ChatViewModel", "⚠️ 请检查：1.图片是否清晰 2.是否包含地址文字 3.地址是否在当前位置附近")
+                    }
                     
-                    when (responseType) {
+                    // ⭐ 按照后端文档标准处理响应（兼容新旧版本）
+                    when (data.type?.uppercase()) {
                         "SEARCH" -> {
-                            val places = response.places ?: emptyList()
-                            if (places.isNotEmpty()) {
-                                // ⭐ 解析 POI 列表（包含 score 字段）
-                                _poiList.value = places.map {
-                                    PoiData(
-                                        it.id ?: "",
-                                        it.name ?: "",
-                                        it.address ?: "",
-                                        it.lat,
-                                        it.lng,
-                                        it.distance,
-                                        it.type ?: "",
-                                        it.duration,
-                                        it.price,
-                                        it.score  // ⭐ 评分字段
-                                    )
-                                }
-                                val suggestions = places.take(3).map { it.name }
-                                val chatMessage = ChatMessage(
-                                    id = UUID.randomUUID().toString(),
-                                    content = response.message,
-                                    isUser = false,
-                                    timestamp = System.currentTimeMillis(),
-                                    suggestions = suggestions
-                                )
-                                _messages.value += chatMessage
-                                
-                                // ⭐ 如果需要确认，弹出候选列表
-                                if (response.needConfirm) {
-                                    Log.d("ChatViewModel", "🔔 需要确认，弹出候选列表对话框")
-                                    _showCandidatesDialog.value = true
-                                }
-                            } else {
-                                addSystemMessage("😕 未从图片中识别到有效地址")
-                            }
+                            // 📍 新版本：识别到地址，显示 POI 列表
+                            handleSearchResponse(data)
+                        }
+                        
+                        "IMAGE_RECOGNITION" -> {
+                            // 📸 旧版本：兼容旧的图片识别类型
+                            handleImageRecognitionResponse(data)
                         }
                         
                         "ORDER" -> {
-                            // 直接返回订单信息(精确匹配)
-                            addSystemMessage(response.message)
-                            response.poi?.let { poi ->
-                                // ⭐ 校验 POI 名称
-                                val poiName = poi.name
-                                if (poiName.isNullOrBlank()) {
-                                    Log.e("ChatViewModel", "❌ POI 名称为空,无法创建订单")
-                                    addSystemMessage("⚠️ 目的地名称缺失")
-                                    return@let
-                                }
-                                Log.d("ChatViewModel", "🚀 图片识别 ORDER: poiName=$poiName")
-                                createOrder(poiName, poi.lat, poi.lng, 1, null)
-                            }
+                            // 🚗 直接返回订单信息(精确匹配)
+                            handleOrderResponse(data)
                         }
                         
                         "CHAT" -> {
-                            // AI 聊天回复
-                            addSystemMessage(response.message)
+                            // 💬 普通聊天回复或未识别到地址
+                            handleChatResponse(data)
                         }
                         
                         else -> {
-                            if (response.type?.uppercase() == "ERROR") {
-                                addSystemMessage("❌ ${response.message}")
-                            } else {
-                                addSystemMessage(response.message ?: "✅ 识别完成")
-                            }
+                            Log.w("ChatViewModel", "⚠️ 未知的响应类型: ${data.type}")
+                            showError("未知的响应类型")
                         }
                     }
                 }
-            } else {
-                // ⭐ 友好的错误提示（对齐后端文档）
-                val errorMsg = when {
-                    result.code == 500 -> "⚠️ 服务器繁忙，请稍后再试（错误码：500）"
-                    result.message.contains("图片大小") -> "⚠️ 图片太大，请重新选择"
-                    result.message.contains("不支持的图片格式") -> "⚠️ 仅支持 JPEG/PNG/BMP 格式"
-                    result.message.contains("网络") -> "⚠️ 网络连接失败"
-                    else -> "❌ 识别失败：${result.message}（错误码：${result.code}）"
+                
+                400 -> {
+                    // ❌ 参数错误
+                    showError("图片格式不正确：${result.message}")
                 }
-                addSystemMessage(errorMsg)
+                
+                422 -> {
+                    // ❌ 未识别到内容
+                    showError("图片中没有识别到地址信息，请换一张清晰的图片")
+                }
+                
+                503 -> {
+                    // ❌ 服务不可用
+                    showError("图片识别服务暂时不可用，请稍后重试")
+                }
+                
+                500 -> {
+                    // ❌ 系统错误
+                    showError("系统繁忙，请稍后重试")
+                }
+                
+                else -> {
+                    // ❌ 其他错误
+                    showError("识别失败：${result.message}（错误码：${result.code}）")
+                }
             }
         }
+    }
+
+    // ⭐ 新增：处理 SEARCH 响应（新版本）
+    private fun handleSearchResponse(data: AgentSearchResponse) {
+        val places = data.places ?: emptyList()
+        Log.d("ChatViewModel", "📍 SEARCH 类型，places count=${places.size}")
+        
+        if (places.isNotEmpty()) {
+            _poiList.value = places.map {
+                PoiData(
+                    it.id ?: "",
+                    it.name ?: "",
+                    it.address ?: "",
+                    it.lat,
+                    it.lng,
+                    it.distance,
+                    it.type ?: "",
+                    it.duration,
+                    it.price,
+                    it.score
+                )
+            }
+            
+            val suggestions = places.take(3).map { it.name }
+            val chatMessage = ChatMessage(
+                id = UUID.randomUUID().toString(),
+                content = data.message ?: "为你找到以下地点",
+                isUser = false,
+                timestamp = System.currentTimeMillis(),
+                suggestions = suggestions
+            )
+            _messages.value += chatMessage
+            
+            if (data.needConfirm) {
+                Log.d("ChatViewModel", "🔔 需要确认，弹出候选列表对话框")
+                _showCandidatesDialog.value = true
+            }
+            
+            speak("找到 ${places.size} 个相关地点")
+        } else {
+            addSystemMessage("😕 未从图片中识别到有效地址")
+        }
+    }
+
+    // ⭐ 新增：处理 IMAGE_RECOGNITION 响应（旧版本兼容）
+    private fun handleImageRecognitionResponse(data: AgentSearchResponse) {
+        val places = data.places ?: data.candidates ?: emptyList()
+        Log.d("ChatViewModel", "📸 IMAGE_RECOGNITION 类型，places count=${places.size}")
+        
+        if (places.isNotEmpty()) {
+            _poiList.value = places.map {
+                PoiData(
+                    it.id ?: "",
+                    it.name ?: "",
+                    it.address ?: "",
+                    it.lat,
+                    it.lng,
+                    it.distance,
+                    it.type ?: "",
+                    it.duration,
+                    it.price,
+                    it.score
+                )
+            }
+            
+            val suggestions = places.take(3).map { it.name }
+            val chatMessage = ChatMessage(
+                id = UUID.randomUUID().toString(),
+                content = data.message ?: "找到 ${places.size} 个相关地点",
+                isUser = false,
+                timestamp = System.currentTimeMillis(),
+                suggestions = suggestions
+            )
+            _messages.value += chatMessage
+            
+            if (data.needConfirm) {
+                _showCandidatesDialog.value = true
+            }
+            
+            speak("找到 ${places.size} 个相关地点")
+        } else {
+            val errorMsg = if (!data.message.isNullOrBlank()) {
+                "😕 ${data.message}\n\n💡 建议：\n• 确保图片清晰，光线充足\n• 拍摄招牌、路牌等包含地址的文字\n• 尝试拍摄更近的视角"
+            } else {
+                "😕 未从图片中识别到有效地址\n\n💡 建议：\n• 确保图片清晰，光线充足\n• 拍摄招牌、路牌等包含地址的文字\n• 尝试拍摄更近的视角"
+            }
+            addSystemMessage(errorMsg)
+        }
+    }
+
+    // ⭐ 新增：处理 ORDER 响应
+    private fun handleOrderResponse(data: AgentSearchResponse) {
+        data.message?.let { addSystemMessage(it) }
+        data.poi?.let { poi ->
+            val poiName = poi.name
+            if (poiName.isNullOrBlank()) {
+                Log.e("ChatViewModel", "❌ POI 名称为空,无法创建订单")
+                addSystemMessage("⚠️ 目的地名称缺失")
+                return@let
+            }
+            Log.d("ChatViewModel", "🚀 图片识别 ORDER: poiName=$poiName")
+            createOrder(poiName, poi.lat, poi.lng, 1, null)
+        }
+    }
+
+    // ⭐ 新增：处理 CHAT 响应
+    private fun handleChatResponse(data: AgentSearchResponse) {
+        showMessage(data.message)
     }
 
     fun startVoiceInput(context: Context) {
@@ -1003,17 +1118,25 @@ class ChatViewModel @Inject constructor(
         Log.d("ChatViewModel", "开始语音识别")
         
         if (speechHelper == null) {
-            // ⭐ 修改：使用百度语音识别
+            // ⭐ 修改：使用百度语音识别，支持方言
+            val baiduLanguage = when (_currentAccent.value) {
+                "mandarin" -> "zh-CN"
+                "cantonese" -> "zh-HK"
+                "sichuan" -> "zh-SICHUAN"
+                else -> "zh-CN"
+            }
+            
             speechHelper = BaiduSpeechRecognizerHelper(
                 context = context,
                 onResult = { finalText ->
                     // 最终结果：更新输入框，但不自动发送
                     Log.d("ChatViewModel", "✅ 收到百度语音最终结果: $finalText")
-                    if (finalText.isNotBlank()) {
+                    if (finalText.isNotBlank() && !finalText.contains("配置错误")) {
                         _voiceInputText.value = finalText  // ⭐ 设置到输入框，等待用户手动发送
                     } else {
-                        Log.w("ChatViewModel", "⚠️ 语音识别结果为空")
-                        addSystemMessage("⚠️ 未识别到语音内容")
+                        Log.w("ChatViewModel", "⚠️ 语音识别结果为空或配置错误")
+                        // ⭐ 不显示提示，避免干扰用户
+                        // addSystemMessage("⚠️ 未识别到语音内容")
                     }
                     _isListening.value = false
                     speechHelper = null
@@ -1024,7 +1147,8 @@ class ChatViewModel @Inject constructor(
                     if (partialText.isNotBlank()) {
                         _voiceInputText.value = partialText  // ⭐ 实时更新 UI
                     }
-                }
+                },
+                language = baiduLanguage  // ⭐ 传入方言参数
             )
         }
         _isListening.value = true
@@ -1205,8 +1329,10 @@ class ChatViewModel @Inject constructor(
             Log.d("ChatViewModel", "type=${response.type}, message=${response.message}")
             Log.d("ChatViewModel", "data=${response.data}")
             
-            // ⭐ 特殊处理：图片识别响应（后端可能不返回 type 字段）
-            val isImageRecognition = json.contains("ocrText") || json.contains("success") || response.success != null
+            // ⭐ 特殊处理：图片识别响应（支持 type=image_recognition）
+            val isImageRecognition = response.type?.uppercase() == "IMAGE_RECOGNITION" ||
+                                     json.contains("ocrText") || 
+                                     (json.contains("success") && response.success != null)
             
             when {
                 isImageRecognition -> {
@@ -1760,9 +1886,9 @@ class ChatViewModel @Inject constructor(
             Log.d("ImageCompression", "原始文件大小: ${source.byteCount / 1024} KB")
             Log.d("ImageCompression", "原始分辨率: ${source.width}x${source.height}")
             
-            // 第 1 步：缩小分辨率（最大 640x640，严格限制）
-            val maxWidth = 640
-            val maxHeight = 640
+            // 第 1 步：缩小分辨率（最大 1280x1280，提升清晰度）
+            val maxWidth = 1280
+            val maxHeight = 1280
             var width = bitmap.width
             var height = bitmap.height
             
@@ -1775,13 +1901,13 @@ class ChatViewModel @Inject constructor(
             }
             
             // 第 2 步：降低 JPEG 质量，直到满足大小要求
-            var quality = 70
+            var quality = 85  // ⭐ 提升初始质量（从 70 提升到 85）
             var outputStream = ByteArrayOutputStream()
             bitmap.compress(Bitmap.CompressFormat.JPEG, quality, outputStream)
             
-            while (outputStream.toByteArray().size > maxSizeKB * 1024 && quality > 10) {
+            while (outputStream.toByteArray().size > maxSizeKB * 1024 && quality > 30) {  // ⭐ 最低质量从 10 提升到 30
                 outputStream.reset()
-                quality -= 10
+                quality -= 5  // ⭐ 每次降低 5（更精细的控制）
                 bitmap.compress(Bitmap.CompressFormat.JPEG, quality, outputStream)
                 Log.d("ImageCompression", "降低质量：quality=$quality, size=${outputStream.size() / 1024}KB")
             }
@@ -1830,5 +1956,25 @@ class ChatViewModel @Inject constructor(
         }
             
         return scaledBitmap
+    }
+    
+    // ⭐ 新增：辅助函数 - 显示消息
+    private fun showMessage(message: String?) {
+        if (!message.isNullOrBlank()) {
+            addSystemMessage(message)
+        }
+    }
+    
+    // ⭐ 新增：辅助函数 - 显示错误
+    private fun showError(message: String) {
+        addSystemMessage("❌ $message")
+    }
+    
+    // ⭐ 新增：辅助函数 - 语音播报（预留接口）
+    private fun speak(text: String) {
+        // TODO: 集成 TTS 语音播报功能
+        Log.d("ChatViewModel", "🔊 语音播报: $text")
+        // 未来可以集成百度 TTS 或系统 TTS
+        // ttsHelper?.speak(text)
     }
 }

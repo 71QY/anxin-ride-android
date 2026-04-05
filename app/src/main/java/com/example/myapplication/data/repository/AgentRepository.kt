@@ -153,6 +153,10 @@ class AgentRepository @Inject constructor(
             
             val response = apiService.agentImage(userId, request)
             Log.d("AgentRepository", "响应：code=${response.code}, message=${response.message}")
+            Log.d("AgentRepository", "data.type=${response.data?.type}")
+            Log.d("AgentRepository", "data.places size=${response.data?.places?.size}")
+            Log.d("AgentRepository", "data.candidates size=${response.data?.candidates?.size}")
+            Log.d("AgentRepository", "data.poi=${response.data?.poi?.name}")
             response
         } catch (e: Exception) {
             Log.e("AgentRepository", "图片识别异常", e)

@@ -152,7 +152,7 @@ class AgentFloatService : Service() {
             gravity = Gravity.CENTER
             
             val backgroundDrawable = android.graphics.drawable.GradientDrawable().apply {
-                setColor(android.graphics.Color.parseColor("#CC000000"))
+                setColor(android.graphics.Color.parseColor("#EEFFFFFF"))  // ⭐ 修改：浅白色背景，让黑色文字更清晰
                 cornerRadius = 16f
             }
             this.background = backgroundDrawable
@@ -175,7 +175,7 @@ class AgentFloatService : Service() {
             floatLabel = TextView(this@AgentFloatService).apply {
                 text = "智能体"  // ⭐ 修改：文字改为智能体
                 textSize = 14f  // ⭐ 修改：增大字体到 14f
-                setTextColor(android.graphics.Color.WHITE)  // ⭐ 修改：使用纯白色
+                setTextColor(android.graphics.Color.BLACK)  // ⭐ 修改：使用黑色
                 gravity = Gravity.CENTER
                 setTypeface(null, android.graphics.Typeface.BOLD)  // ⭐ 新增：加粗字体
                 layoutParams = LinearLayout.LayoutParams(

@@ -59,8 +59,8 @@ data class AgentCleanupRequest(
  */
 @Serializable
 data class AgentSearchResponse(
-    @SerialName("type") val type: String,          // SEARCH / ORDER / CHAT
-    @SerialName("message") val message: String,
+    @SerialName("type") val type: String? = null,          // SEARCH / ORDER / CHAT / IMAGE_RECOGNITION
+    @SerialName("message") val message: String? = null,
     @SerialName("places") val places: List<PoiResponse>? = null,
     @SerialName("candidates") val candidates: List<PoiResponse>? = null,
     @SerialName("needConfirm") val needConfirm: Boolean = false,
