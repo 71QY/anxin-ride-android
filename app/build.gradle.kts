@@ -1,6 +1,3 @@
-import java.util.Properties
-import java.io.FileInputStream
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -24,20 +21,13 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
-        // ⭐ 从 local.properties 读取配置
-        val localProperties = Properties()
-        val localPropertiesFile = rootProject.file("local.properties")
-        if (localPropertiesFile.exists()) {
-            localProperties.load(FileInputStream(localPropertiesFile))
-        }
-        
-        val apiBaseUrl = localProperties.getProperty("api.baseUrl", "http://10.241.75.80:8080/api/")
-        val websocketUrl = localProperties.getProperty("websocket.url", "ws://10.241.75.80:8080/ws/agent")
-        val amapKey = localProperties.getProperty("amap.key", "")
-        val iflytekAppid = localProperties.getProperty("iflytek.appid", "")
-        val baiduAppId = localProperties.getProperty("baidu.app.id", "")
-        val baiduApiKey = localProperties.getProperty("baidu.api.key", "")
-        val baiduSecretKey = localProperties.getProperty("baidu.secret.key", "")
+        val apiBaseUrl = project.findProperty("api.baseUrl")?.toString() ?: "http://10.241.75.80:8080/api/"
+        val websocketUrl = project.findProperty("websocket.url")?.toString() ?: "ws://10.241.75.80:8080/ws/agent"
+        val amapKey = project.findProperty("amap.key")?.toString() ?: ""
+        val iflytekAppid = project.findProperty("iflytek.appid")?.toString() ?: ""
+        val baiduAppId = project.findProperty("baidu.app.id")?.toString() ?: ""
+        val baiduApiKey = project.findProperty("baidu.api.key")?.toString() ?: ""
+        val baiduSecretKey = project.findProperty("baidu.secret.key")?.toString() ?: ""
         
         buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
         buildConfigField("String", "WEBSOCKET_URL", "\"$websocketUrl\"")
@@ -84,16 +74,7 @@ android {
     }
     
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.8"  // ⭐ 回退到最初能工作的版本
-    }
-    
-    // ⭐ 强制跳过 Kotlin 版本兼容性检查（解决 VerifyError）
-    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-        kotlinOptions {
-            freeCompilerArgs += listOf(
-                "-P", "plugin:androidx.compose.compiler.plugins.kotlin:suppressKotlinVersionCompatibilityCheck=true"
-            )
-        }
+        kotlinCompilerExtensionVersion = "1.5.8"  // ⭐ 与 Kotlin 1.9.22 兼容
     }
     
     packaging {
@@ -133,8 +114,8 @@ dependencies {
     implementation(libs.accompanist.permissions)
     implementation(files("libs\\Msc.jar"))
     implementation(files("libs\\amap-full-11.1.0.aar"))
-    // ⭐ 新增：百度语音识别 SDK（显式声明，避免 fileTree 冲突）
-    implementation(files("libs\\bdasr_aipd_V3_20250717_1e379e2.aar"))
+    // ⭐ 新增：百度语音识别 SDK
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
     implementation(libs.retrofit)
     implementation(libs.retrofit.converter.gson)
     implementation(libs.okhttp.logging.interceptor)
