@@ -2119,15 +2119,15 @@
             )
             
             // 构建通知
-            val notification = androidx.core.app.NotificationCompat.Builder(appContext, channelId)
-                .setSmallIcon(androidx.core.R.drawable.ic_menu_share)  // ⭐ 临时使用系统图标，编译后改为 R.drawable.ic_launcher_foreground
+            val notification = NotificationCompat.Builder(appContext, channelId)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)  // ⭐ 使用 Android 系统图标
                 .setContentTitle("🚗 新的代叫车请求")
                 .setContentText("$requesterName 为你叫了车：$destination")
-                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
-                .setCategory(androidx.core.app.NotificationCompat.CATEGORY_CALL)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_CALL)
                 .setAutoCancel(true)
                 .setContentIntent(pendingIntent)
-                .setDefaults(androidx.core.app.NotificationCompat.DEFAULT_ALL)
+                .setDefaults(NotificationCompat.DEFAULT_ALL)
                 .setFullScreenIntent(pendingIntent, true)  // ⭐ 关键：允许全屏显示（类似来电）
                 .build()
             

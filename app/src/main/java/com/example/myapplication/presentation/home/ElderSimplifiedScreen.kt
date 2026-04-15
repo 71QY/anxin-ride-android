@@ -623,6 +623,7 @@ fun ElderSimplifiedScreen(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(max = 500.dp)  // ⭐ 新增：限制最大高度，确保可滚动
                     .align(Alignment.BottomCenter),  // ⭐ 修复：紧贴底部导航栏，无额外间距
                 shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),  // ⭐ 减小圆角：32dp→24dp
                 colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -635,9 +636,10 @@ fun ElderSimplifiedScreen(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp)  // ⭐ 减小间距：10dp→8dp，更紧凑
                 ) {
-                    // 订单信息
+                    // 订单信息 - ⭐ 调高位置，增加顶部边距
                     if (orderState is HomeViewModel.OrderState.Success) {
                         val order = (orderState as HomeViewModel.OrderState.Success).order
+                        Spacer(modifier = Modifier.height(16.dp))  // ⭐ 新增：增加顶部间距，调高卡片位置
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = CardDefaults.cardColors(

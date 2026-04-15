@@ -5,7 +5,7 @@ package com.example.myapplication.core.websocket
 import android.util.Log
 import com.example.myapplication.BuildConfig
 import kotlinx.coroutines.*
-// import kotlinx.coroutines.flow.BufferOverflow  // ⭐ IDE缓存问题，编译时可用
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import okhttp3.OkHttpClient
@@ -28,7 +28,7 @@ class ChatWebSocketClient @Inject constructor() {
     private val _messages = MutableSharedFlow<String>(
         replay = 0,
         extraBufferCapacity = 64,
-        onBufferOverflow = kotlinx.coroutines.flow.BufferOverflow.SUSPEND  // ⭐ 使用全限定名
+        onBufferOverflow = BufferOverflow.SUSPEND
     )
     val messages = _messages.asSharedFlow()
 
