@@ -1392,6 +1392,28 @@
                         Log.d("HomeViewModel", "👴 长辈模式：启动独立定位和加载亲友列表")
                         startIndependentLocation()
                         loadGuardianInfo()
+                        
+                        // ⭐ 关键修复：长辈端必须使用自己的 userId 重新连接 WebSocket
+                        val currentUserId = tokenManager.getUserId()
+                        if (currentUserId != null && webSocketClient.isConnected()) {
+                            Log.d("HomeViewModel", "🔌 长辈端检测到 WebSocket 已连接，检查是否需要重连...")
+                            // TODO: 需要检查当前 WebSocket 连接的 userId 是否匹配
+                            // 暂时先断开重连，确保使用正确的 userId
+                            Log.d("HomeViewModel", "⚠️ 断开旧连接，准备用 userId=$currentUserId 重新连接")
+                            webSocketClient.disconnect()
+                            kotlinx.coroutines.delay(500)  // 等待断开完成
+                            isConnectingWebSocket = false  // 重置标记
+                            connectWebSocketForElderMode()
+                        } else if (!webSocketClient.isConnected() && !isConnectingWebSocket) {
+                            Log.d("HomeViewModel", "🔌 WebSocket 未连接，开始连接...")
+                            isConnectingWebSocket = true
+                            try {
+                                connectWebSocketForElderMode()
+                            } finally {
+                                kotlinx.coroutines.delay(2000)
+                                isConnectingWebSocket = false
+                            }
+                        }
                     } else {
                         // 普通模式：加载长辈列表（用于帮长辈叫车）
                         Log.d("HomeViewModel", "👤 普通模式：加载长辈列表")
@@ -1988,9 +2010,12 @@
                     val jsonObject = org.json.JSONObject(json)
                     val type = jsonObject.optString("type", "")
                     
-                    // ⭐ 修复：同时处理 GUARD_PUSH 和 ORDER_CREATED 类型
-                    if (type.uppercase() != "GUARD_PUSH" && type.uppercase() != "ORDER_CREATED") {
-                        // 不是这两种类型，忽略（由 ChatViewModel 处理）
+                    // ⭐ 修复：同时处理 GUARD_PUSH、ORDER_CREATED 和直接的订单状态消息
+                    if (type.uppercase() != "GUARD_PUSH" && 
+                        type.uppercase() != "ORDER_CREATED" &&
+                        type.uppercase() != "ORDER_ACCEPTED" &&
+                        type.uppercase() != "DRIVER_LOCATION") {
+                        // 不是这些类型，忽略（由 ChatViewModel 处理）
                         return@launch
                     }
                     
@@ -2016,12 +2041,31 @@
                                     // ⭐ 代叫车请求通知
                                     Log.d("HomeViewModel", "🚗 收到代叫车请求：orderId=${pushMessage.orderId}, requester=${pushMessage.proxyUserName}, dest=${pushMessage.destAddress}")
                                     
-                                    // ⭐ 关键修改：无论前台后台，都发送高优先级通知
+                                    // ⭐ 关键修复：设置 _proxyOrderRequest 触发 UI 弹窗
+                                    _proxyOrderRequest.value = ProxyOrderRequest(
+                                        orderId = pushMessage.orderId ?: 0L,
+                                        requesterName = pushMessage.proxyUserName ?: "亲友",
+                                        destination = pushMessage.destAddress ?: "未知目的地"
+                                    )
+                                    
+                                    // ⭐ 无论前台后台，都发送高优先级通知
                                     sendIncomingCallNotification(
                                         orderId = pushMessage.orderId ?: 0L,
                                         requesterName = pushMessage.proxyUserName ?: "亲友",
                                         destination = pushMessage.destAddress ?: "未知目的地"
                                     )
+                                }
+                                
+                                "ORDER_ACCEPTED" -> {
+                                    // ⭐ 司机已接单，自动跳转到行程追踪页面
+                                    val orderId = pushMessage.orderId ?: 0L
+                                    Log.d("HomeViewModel", "✅ 司机已接单，准备跳转：orderId=$orderId")
+                                    
+                                    // ⭐ 触发导航事件
+                                    viewModelScope.launch {
+                                        _events.send(HomeEvent.NavigateToOrderTracking(orderId))
+                                        Log.d("HomeViewModel", "🚀 已发送导航事件: orderId=$orderId")
+                                    }
                                 }
                                 
                                 "CHAT_MESSAGE" -> {
@@ -2057,6 +2101,23 @@
                                 requesterName = requesterName,
                                 destination = destAddress
                             )
+                        }
+                        
+                        "ORDER_ACCEPTED" -> {
+                            // ⭐ 直接接收的司机接单消息（非 GUARD_PUSH 包装）
+                            val orderId = jsonObject.optLong("orderId", 0L)
+                            Log.d("HomeViewModel", "✅ 司机已接单（直接消息），准备跳转：orderId=$orderId")
+                            
+                            // ⭐ 触发导航事件
+                            viewModelScope.launch {
+                                _events.send(HomeEvent.NavigateToOrderTracking(orderId))
+                                Log.d("HomeViewModel", "🚀 已发送导航事件: orderId=$orderId")
+                            }
+                        }
+                        
+                        "DRIVER_LOCATION" -> {
+                            // 司机位置更新，忽略（由 OrderTrackingViewModel 处理）
+                            Log.d("HomeViewModel", "📍 收到司机位置更新")
                         }
                     }
                 } catch (e: Exception) {
