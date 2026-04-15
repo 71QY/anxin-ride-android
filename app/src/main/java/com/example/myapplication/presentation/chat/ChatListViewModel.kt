@@ -15,7 +15,8 @@ import javax.inject.Inject
 @HiltViewModel
 class ChatListViewModel @Inject constructor() : ViewModel() {
     
-    private val _sessions = MutableStateFlow(ChatSession.getMockSessions())
+    // ⭐ 修复：使用空列表，不再使用死数据
+    private val _sessions = MutableStateFlow<List<ChatSession>>(emptyList())
     val sessions: StateFlow<List<ChatSession>> = _sessions.asStateFlow()
     
     private val _selectedSessionId = MutableStateFlow<String?>(null)
@@ -29,10 +30,8 @@ class ChatListViewModel @Inject constructor() : ViewModel() {
      */
     fun selectSession(sessionId: String) {
         _selectedSessionId.value = sessionId
-        
-        // 加载该会话的消息
-        val messages = ChatSession.getMockMessages(sessionId)
-        _currentMessages.value = messages
+        // ⭐ 修复：不再加载模拟消息，使用真实数据
+        _currentMessages.value = emptyList()
         
         // 清除未读数
         clearUnreadCount(sessionId)
@@ -47,7 +46,7 @@ class ChatListViewModel @Inject constructor() : ViewModel() {
     }
     
     /**
-     * 发送消息（模拟）
+     * 发送消息
      */
     fun sendMessage(content: String) {
         val sessionId = _selectedSessionId.value ?: return
@@ -64,8 +63,8 @@ class ChatListViewModel @Inject constructor() : ViewModel() {
         // 更新最后一条消息
         updateLastMessage(sessionId, content)
         
-        // 模拟对方回复（1秒后）
-        simulateReply(sessionId)
+        // ⭐ 删除：移除模拟回复，使用真实 WebSocket 通信
+        // simulateReply(sessionId)
     }
     
     /**
@@ -94,35 +93,6 @@ class ChatListViewModel @Inject constructor() : ViewModel() {
             } else {
                 session
             }
-        }
-    }
-    
-    /**
-     * 模拟对方回复
-     */
-    private fun simulateReply(sessionId: String) {
-        val replies = listOf(
-            "好的",
-            "收到",
-            "明白了",
-            "没问题",
-            "稍等一下"
-        )
-        
-        val randomReply = replies.random()
-        
-        viewModelScope.launch {
-            delay(1000)
-            
-            val replyMessage = ChatMessage(
-                id = "msg_reply_${System.currentTimeMillis()}",
-                content = randomReply,
-                isUser = false,
-                timestamp = System.currentTimeMillis()
-            )
-            
-            _currentMessages.value = _currentMessages.value + replyMessage
-            updateLastMessage(sessionId, randomReply)
         }
     }
 }

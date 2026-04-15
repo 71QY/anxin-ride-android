@@ -28,6 +28,9 @@ class ChatWebSocketClient @Inject constructor() {
 
     @Volatile
     private var isConnected = false
+    
+    @Volatile
+    private var isConnecting = false  // ⭐ 新增：标记正在连接中
 
     private var reconnectAttempts = 0
     private val maxReconnectAttempts = 5
@@ -43,8 +46,21 @@ class ChatWebSocketClient @Inject constructor() {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     fun connect(sessionId: String, token: String) {
+        // ⭐ 关键修复：防止重复连接
+        if (isConnecting) {
+            Log.w("WebSocket", "⚠️ 正在连接中，跳过重复连接请求")
+            return
+        }
+        
+        // ⭐ 如果已经连接成功，不需要重新连接
+        if (isConnected && this.sessionId == sessionId) {
+            Log.d("WebSocket", "✅ 已连接到相同会话，跳过连接")
+            return
+        }
+        
         this.sessionId = sessionId
         this.token = token
+        isConnecting = true  // ⭐ 标记开始连接
 
         // 取消旧的 WebSocket 连接
         webSocket?.cancel()
@@ -69,8 +85,9 @@ class ChatWebSocketClient @Inject constructor() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 super.onOpen(webSocket, response)
                 isConnected = true
+                isConnecting = false  // ⭐ 连接成功，清除标记
                 reconnectAttempts = 0
-                Log.d("WebSocket", "Connection established")
+                Log.d("WebSocket", "✅ 连接建立成功")
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -88,6 +105,7 @@ class ChatWebSocketClient @Inject constructor() {
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 super.onFailure(webSocket, t, response)
                 isConnected = false
+                isConnecting = false  // ⭐ 连接失败，清除标记
                 
                 val errorMsg = buildString {
                     append("Connection failed: ${t.message}")
@@ -115,15 +133,16 @@ class ChatWebSocketClient @Inject constructor() {
                     }
                 }
 
+                // ⭐ 优化：增加重连间隔，避免频繁重连导致后端刷屏
                 if (reconnectAttempts < maxReconnectAttempts) {
                     val delayTime = backoffTimes.getOrElse(reconnectAttempts) { 16000L }
                     reconnectAttempts++
-                    Log.d("WebSocket", "Reconnecting in ${delayTime}ms ${reconnectAttempts}/${maxReconnectAttempts}")
+                    Log.d("WebSocket", "⏳ 将在 ${delayTime}ms 后重连 (${reconnectAttempts}/${maxReconnectAttempts})")
 
                     scope.launch {
                         delay(delayTime)
                         if (isActive) {
-                            Log.d("WebSocket", "Starting reconnection...")
+                            Log.d("WebSocket", "🔄 开始重连...")
                             sessionId?.let { sid ->
                                 token?.let { tk ->
                                     connect(sid, tk)
@@ -132,26 +151,28 @@ class ChatWebSocketClient @Inject constructor() {
                         }
                     }
                 } else {
-                    Log.e("WebSocket", "Reconnection failed, max attempts reached")
+                    Log.e("WebSocket", "❌ 重连失败，已达最大尝试次数")
                 }
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 super.onClosed(webSocket, code, reason)
                 isConnected = false
-                Log.d("WebSocket", "Connection closed: code=$code, reason=$reason")
+                isConnecting = false  // ⭐ 连接关闭，清除标记
+                Log.d("WebSocket", "🔌 连接关闭: code=$code, reason=$reason")
                 
-                // 异常关闭时尝试重连
+                // ⭐ 优化：异常关闭时增加重连间隔，避免频繁重连
                 if (code != 1000 && code != 1001) {
-                    Log.w("WebSocket", "Abnormal close code=$code, attempting reconnection")
+                    Log.w("WebSocket", "⚠️ 异常关闭 code=$code，准备重连")
                     if (reconnectAttempts < maxReconnectAttempts) {
                         reconnectAttempts++
                         scope.launch {
-                            delay(1000)
+                            // ⭐ 增加延迟到 5 秒，避免每秒重连
+                            delay(5000)
                             if (isActive) {
                                 sessionId?.let { sid ->
                                     token?.let { tk ->
-                                        Log.d("WebSocket", "Reconnecting after abnormal close: ${reconnectAttempts}/${maxReconnectAttempts}")
+                                        Log.d("WebSocket", "🔄 异常关闭后重连: ${reconnectAttempts}/${maxReconnectAttempts}")
                                         connect(sid, tk)
                                     }
                                 }
@@ -159,7 +180,7 @@ class ChatWebSocketClient @Inject constructor() {
                         }
                     }
                 } else {
-                    Log.d("WebSocket", "Normal close, no reconnection")
+                    Log.d("WebSocket", "✅ 正常关闭，不重连")
                 }
             }
         })
@@ -190,11 +211,20 @@ class ChatWebSocketClient @Inject constructor() {
     }
 
     fun disconnect() {
+        Log.d("WebSocket", "🔌 主动断开 WebSocket 连接")
+        // ⭐ 先取消作用域，停止所有重连任务
         scope.cancel()
+        // ⭐ 关闭 WebSocket 连接
         webSocket?.close(1000, "正常关闭")
+        // ⭐ 清理资源
         webSocket = null
         isConnected = false
-        Log.d("WebSocket", "Disconnected")
+        isConnecting = false  // ⭐ 清除连接中状态
+        // ⭐ 关键修复：重置重连计数器，避免影响下次连接
+        reconnectAttempts = 0
+        sessionId = null
+        token = null
+        Log.d("WebSocket", "✅ WebSocket 已完全断开，资源已清理")
     }
 
     fun isConnected(): Boolean {

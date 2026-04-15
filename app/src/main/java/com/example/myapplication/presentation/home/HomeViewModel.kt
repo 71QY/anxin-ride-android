@@ -1,6 +1,8 @@
     package com.example.myapplication.presentation.home
     
     import android.content.Context
+    import android.content.Intent
+    import android.os.Build
     import android.util.LruCache
     import android.util.Log
     import androidx.compose.runtime.getValue
@@ -32,6 +34,7 @@
     import com.example.myapplication.data.model.Order
     import com.example.myapplication.data.model.PoiDetail
     import com.example.myapplication.data.model.PoiResponse
+    import com.example.myapplication.data.model.GuardianInfo  // ⭐ 新增：亲友信息
     import com.example.myapplication.data.repository.AgentRepository
     import com.example.myapplication.data.repository.OrderRepository
     import com.example.myapplication.domain.repository.IOrderRepository
@@ -43,12 +46,15 @@
     import kotlinx.coroutines.Job
     import kotlinx.coroutines.channels.Channel
     import kotlinx.coroutines.delay
+    import kotlinx.coroutines.Dispatchers
+    import kotlinx.coroutines.SupervisorJob
     import kotlinx.coroutines.flow.MutableStateFlow
     import kotlinx.coroutines.flow.StateFlow
     import kotlinx.coroutines.flow.asStateFlow
     import kotlinx.coroutines.flow.receiveAsFlow
     import kotlinx.coroutines.launch
     import kotlinx.coroutines.suspendCancellableCoroutine
+    import kotlinx.coroutines.withContext
     import kotlinx.coroutines.withTimeout
     import org.json.JSONObject
     import java.util.concurrent.atomic.AtomicLong
@@ -140,7 +146,39 @@
     
         private val _backendPoiResults = MutableStateFlow<List<PoiResponse>>(emptyList())
         val backendPoiResults: StateFlow<List<PoiResponse>> = _backendPoiResults.asStateFlow()
-    
+        
+        // ⭐ 新增：长辈模式标识
+        private val _isElderMode = MutableStateFlow(false)
+        val isElderMode: StateFlow<Boolean> = _isElderMode.asStateFlow()
+        
+        // ⭐ 新增：userId
+        private val _userId = MutableStateFlow<Long?>(null)
+        val userId: StateFlow<Long?> = _userId.asStateFlow()
+        
+        // ⭐ 修复：用户信息加载状态（用于自动登录验证）
+        private val _isProfileLoaded = MutableStateFlow(false)
+        val isProfileLoaded: StateFlow<Boolean> = _isProfileLoaded.asStateFlow()
+        
+        // ⭐ 新增：亲友列表（长辈模式）
+        private val _guardianInfoList = MutableStateFlow<List<GuardianInfo>>(emptyList())
+        val guardianInfoList: StateFlow<List<GuardianInfo>> = _guardianInfoList.asStateFlow()
+        
+        // ⭐ 新增：长辈列表（普通用户模式，用于帮长辈叫车）
+        private val _elderInfoList = MutableStateFlow<List<com.example.myapplication.data.model.ElderInfo>>(emptyList())
+        val elderInfoList: StateFlow<List<com.example.myapplication.data.model.ElderInfo>> = _elderInfoList.asStateFlow()
+        
+        // ⭐ 新增：长辈列表加载标志（用于缓存）
+        private var _elderListLoaded = false
+        
+        // ⭐ 高优先级2：代叫车请求通知（用于长辈端）
+        data class ProxyOrderRequest(
+            val orderId: Long,
+            val requesterName: String,  // 代叫人姓名
+            val destination: String     // 目的地
+        )
+        private val _proxyOrderRequest = MutableStateFlow<ProxyOrderRequest?>(null)
+        val proxyOrderRequest: StateFlow<ProxyOrderRequest?> = _proxyOrderRequest.asStateFlow()
+        
         private var searchJob: Job? = null
         private var speechHelper: BaiduSpeechRecognizerHelper? = null
         private val addressCache = LruCache<Long, String>(20)
@@ -153,10 +191,42 @@
         sealed class HomeEvent {
             data class LocationUpdated(val lat: Double, val lng: Double) : HomeEvent()
             data class OrderCreated(val order: Order) : HomeEvent()  // ⭐ 新增
+            data class NavigateToOrderTracking(val orderId: Long) : HomeEvent()  // ⭐ 新增：跳转到行程追踪页面
         }
     
         private fun getCacheKey(latLng: LatLng): Long {
             return (latLng.latitude * 10_000).toLong() * 10_000 + (latLng.longitude * 10_000).toLong()
+        }
+        
+        init {
+            // ⭐ 新增：获取 userId（在协程中调用 suspend 函数）
+            viewModelScope.launch {
+                _userId.value = tokenManager.getUserId()
+                Log.d("HomeViewModel", "🔑 userId: ${_userId.value}")
+                
+                // ⭐ 修复：不再在这里调用 loadProfile，由 UI 层的 checkElderMode 统一处理
+                // 避免重复调用 API 导致竞态条件
+                if (_userId.value != null) {
+                    Log.d("HomeViewModel", "✅ 检测到 userId，等待 UI 层调用 checkElderMode")
+                    // ⭐ 注意：WebSocket 连接已移至 checkElderMode() 中，根据模式决定是否连接
+                } else {
+                    Log.d("HomeViewModel", "ℹ️ 无 userId，跳过自动登录")
+                }
+            }
+            
+            // ⭐ 关键修复：监听全局代叫车请求事件
+            viewModelScope.launch {
+                Log.d("HomeViewModel", "🔍 开始监听全局代叫车请求事件...")
+                MyApplication.proxyOrderRequestEvent.collect { event ->
+                    Log.d("HomeViewModel", "📩 收到全局代叫车请求事件：orderId=${event.orderId}, from=${event.requesterName}, to=${event.destination}")
+                    onProxyOrderRequestReceived(
+                        orderId = event.orderId,
+                        requesterName = event.requesterName,
+                        destination = event.destination
+                    )
+                    Log.d("HomeViewModel", "✅ 已调用 onProxyOrderRequestReceived")
+                }
+            }
         }
     
         fun updateDestination(text: String) {
@@ -242,9 +312,12 @@
                     onResult = { finalText ->
                         // 最终结果：更新文本，但不自动搜索
                         Log.d("HomeViewModel", "✅ 百度语音最终结果: $finalText")
-                        if (finalText.isNotBlank()) {
+                        if (finalText.isNotBlank() && !finalText.contains("配置错误")) {
                             _voiceText.value = finalText
                             updateDestination(finalText)  // ⭐ 只更新目的地，不自动搜索
+                        } else if (finalText.contains("配置错误")) {
+                            Log.e("HomeViewModel", "⚠️ 语音配置错误")
+                            // ⭐ 显示错误提示
                         } else {
                             Log.w("HomeViewModel", "⚠️ 语音识别结果为空")
                         }
@@ -256,7 +329,7 @@
                         Log.d("HomeViewModel", "🔄 百度语音实时结果: $partialText")
                         if (partialText.isNotBlank()) {
                             _voiceText.value = partialText
-                            updateDestination(partialText)  // ⭐ 实时更新 UI
+                            updateDestination(partialText)  // ⭐ 实时更新 UI，让用户看到自己说的话
                         }
                     },
                     language = baiduLanguage  // ⭐ 传入方言
@@ -315,10 +388,10 @@
     
         fun stopVoiceInput() {
             Log.d("HomeViewModel", "=== stopVoiceInput 被调用 ===")
-            speechHelper?.destroy()
+            speechHelper?.stopListening()  // ⭐ 修改：使用 stopListening 而不是 destroy
             speechHelper = null  // ⭐ 修改：清空引用，防止内存泄漏
             _isListening.value = false
-            _voiceText.value = ""  // ⭐ 清空语音文本
+            // ⭐ 不清空 voiceText，让用户看到最后识别的内容
         }
     
         fun updateCurrentLocation(lat: Double, lng: Double) {
@@ -328,7 +401,6 @@
         // ⭐ 新增：更新定位精度
         fun updateLocationAccuracy(accuracy: Float) {
             _locationAccuracy.value = accuracy
-            Log.d("HomeViewModel", "📍 定位精度更新：±${accuracy}m")
         }
     
         fun onMapClick(latLng: LatLng) {
@@ -431,7 +503,9 @@
             
             val latLng = LatLng(poi.coordinate.latitude, poi.coordinate.longitude)
             _clickedLocation.value = latLng
-            _destination.value = poi.name
+            _destination.value = poi.name  // ⭐ 关键修复：立即设置目的地，不等待逆地理编码
+            
+            Log.d("HomeViewModel", "✅ 已设置 destination='${poi.name}', clickedLocation=$latLng")
             
             // ⭐ 修改：直接显示 POI 详情，不再通过逆地理编码获取地址
             showPoiDetailDialog(poi)
@@ -567,12 +641,13 @@
                     val geocodeSearch = GeocodeSearch(appContext)
                     geocodeSearch.setOnGeocodeSearchListener(object : GeocodeSearch.OnGeocodeSearchListener {
                         override fun onRegeocodeSearched(result: RegeocodeResult?, rCode: Int) {
-                            if (rCode == 10000) { // AMapException.CODE_AMAP_SUCCESS
+                            // ⭐ 关键修复：高德地图成功码是 1000，不是 10000
+                            if (rCode == 1000) { // AMapException.CODE_AMAP_SUCCESS
                                 val address = result?.regeocodeAddress?.formatAddress
-                                Log.d("HomeViewModel", "逆地理编码成功：$address")
+                                Log.d("HomeViewModel", "✅ 逆地理编码成功：$address")
                                 continuation.resume(address)
                             } else {
-                                Log.e("HomeViewModel", "逆地理编码失败，rCode=$rCode")
+                                Log.e("HomeViewModel", "❌ 逆地理编码失败，rCode=$rCode")
                                 continuation.resume(null)
                             }
                         }
@@ -637,8 +712,8 @@
             _poiDetail.value?.let { detail ->
                 Log.d("HomeViewModel", "=== 确认选择目的地 ===")
                 Log.d("HomeViewModel", "目的地：${detail.name}")
-                // ⭐ 修改：立即创建订单
-                createOrder(detail.name ?: "未知位置")
+                // ⭐ 修改：不再立即创建订单，而是由 UI 层决定下单类型
+                // UI 层会显示选择对话框：帮自己叫车 / 帮长辈叫车
             }
         }
     
@@ -803,6 +878,12 @@
             clearSearchResults()
             _selectedPoiForMap.value = poi
             Log.d("HomeViewModel", "选中 POI: $poiName")
+        }
+        
+        // ⭐ 新增：为帮长辈叫车保存 POI 详情
+        fun selectPoiForProxyOrder(detail: PoiDetail) {
+            Log.d("HomeViewModel", "💾 保存 POI 详情用于帮长辈叫车：name=${detail.name}, lat=${detail.lat}, lng=${detail.lng}")
+            _selectedPoiForMap.value = detail
         }
     
         // ⭐ 修改：点击 POI 后直接获取详情和路线（不触发新搜索）
@@ -1058,6 +1139,9 @@
                             // ⭐ 触发事件，通知 UI 跳转
                             _events.send(HomeEvent.OrderCreated(order))
                             
+                            // ⭐ 新增：发送跳转到行程追踪页面的事件
+                            _events.send(HomeEvent.NavigateToOrderTracking(order.id))
+                            
                             // ⭐ 新增：广播订单创建成功事件（用于刷新个人中心订单列表）
                             Log.d("HomeViewModel", "📢 广播订单创建成功事件，刷新订单列表")
                         } ?: run {
@@ -1082,17 +1166,793 @@
             _orderState.value = OrderState.Idle
         }
     
-        // ⭐ 修改：完善资源清理
+        /**
+         * ⭐ 检查是否为长辈模式
+         */
+        /**
+         * 呼叫亲友（长辈操作）
+         */
+        fun callGuardian(
+            onSuccess: (phone: String, name: String) -> Unit,
+            onError: (String) -> Unit
+        ) {
+            viewModelScope.launch {
+                try {
+                    val userId = tokenManager.getUserId()
+                    if (userId == null) {
+                        onError("用户未登录")
+                        return@launch
+                    }
+                    
+                    Log.d("HomeViewModel", "开始呼叫亲友")
+                    
+                    val response = apiService.callGuardian(userId)
+                    if (response.isSuccess() && response.data != null) {
+                        onSuccess(response.data!!.guardianPhone, response.data!!.guardianName)
+                        Log.d("HomeViewModel", "呼叫亲友成功：${response.data!!.guardianName}")
+                    } else {
+                        onError(response.message ?: "呼叫失败")
+                    }
+                } catch (e: Exception) {
+                    Log.e("HomeViewModel", "呼叫亲友异常", e)
+                    onError(e.message ?: "网络错误")
+                }
+            }
+        }
+        
+        /**
+         * 加载用户信息
+         */
+        private fun loadProfile(onAuthFailure: (() -> Unit)? = null) {
+            viewModelScope.launch {
+                try {
+                    Log.d("HomeViewModel", "🔄 开始加载用户信息...")
+                    val profile = apiService.getUserProfile()
+                    if (profile.isSuccess() && profile.data != null) {
+                        val serverGuardMode = profile.data.guardMode
+                        _isElderMode.value = serverGuardMode == 1
+                        tokenManager.saveGuardMode(serverGuardMode)
+                        _isProfileLoaded.value = true  // ⭐ 标记为已加载
+                        Log.d("HomeViewModel", "✅ 刷新用户信息成功，guardMode=$serverGuardMode")
+                    } else {
+                        Log.e("HomeViewModel", "❌ 获取用户信息失败：${profile.message}")
+                        
+                        // ⭐ 关键修复：只有认证失败才触发退出登录，网络错误等使用本地缓存
+                        val isAuthError = profile.code == 401 || 
+                                         profile.message?.contains("Unauthorized", ignoreCase = true) == true ||
+                                         profile.message?.contains("token invalid", ignoreCase = true) == true ||
+                                         profile.message?.contains("token expired", ignoreCase = true) == true ||
+                                         profile.message?.contains("token失效", ignoreCase = true) == true ||
+                                         profile.message?.contains("认证失败", ignoreCase = true) == true ||
+                                         profile.message?.contains("登录已过期", ignoreCase = true) == true
+                        
+                        if (isAuthError) {
+                            Log.e("HomeViewModel", "❌ 认证失败，需要重新登录")
+                            _isProfileLoaded.value = false
+                            onAuthFailure?.invoke()
+                        } else {
+                            // ⭐ 网络错误、服务器错误等，不修改 isProfileLoaded，保持之前的状态
+                            Log.w("HomeViewModel", "⚠️ 获取用户信息失败（非认证错误），保留本地缓存状态：code=${profile.code}, message=${profile.message}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("HomeViewModel", "❌ 刷新用户信息异常", e)
+                    
+                    // ⭐ 关键修复：只有在认证相关错误时才触发退出登录
+                    // 网络异常、超时等情况不应踢用户回登录页
+                    val isAuthError = e.message?.contains("401") == true || 
+                                     e.message?.contains("Unauthorized", ignoreCase = true) == true ||
+                                     e.message?.contains("token invalid", ignoreCase = true) == true ||
+                                     e.message?.contains("token expired", ignoreCase = true) == true
+                    
+                    if (isAuthError) {
+                        Log.w("HomeViewModel", "⚠️ Token已失效，需要重新登录")
+                        _isProfileLoaded.value = false
+                        onAuthFailure?.invoke()
+                    } else {
+                        // ⭐ 其他异常（网络错误等）不影响自动登录，不修改 isProfileLoaded
+                        Log.w("HomeViewModel", "⚠️ 网络异常，保留本地缓存的用户信息状态：${e.message}")
+                    }
+                }
+            }
+        }
+        
+        // ⭐ 新增：WebSocket 连接防抖标记
+        private var isConnectingWebSocket = false
+        
+        // ⭐ 新增：防抖标记，避免 checkElderMode 重复调用
+        private var isCheckingElderMode = false
+        
+        // ⭐ 新增：WebSocket connected 消息防抖（避免每秒打印）
+        private var lastConnectedLogTime = 0L
+        private val CONNECTED_LOG_INTERVAL = 30000L  // ⭐ 增加到 30 秒内只打印一次
+        
+        /**
+         * ⭐ 检查长辈模式并建立 WebSocket 连接
+         */
+        fun checkElderMode(onAuthFailure: (() -> Unit)? = null) {
+            // ⭐ 关键修复：在协程外部立即设置标记，防止并发调用
+            if (isCheckingElderMode) {
+                Log.d("HomeViewModel", "⚠️ checkElderMode 正在执行中，跳过重复调用")
+                return
+            }
+            
+            // ⭐ 立即设置标记（在 launch 之前）
+            isCheckingElderMode = true
+            Log.d("HomeViewModel", "🔒 已设置 isCheckingElderMode = true")
+            
+            viewModelScope.launch {
+                try {
+                    Log.d("HomeViewModel", "🔍 === 开始检查长辈模式（自动登录验证）===")
+                    Log.d("HomeViewModel", "📱 当前 userId: ${tokenManager.getUserId()}")
+                    Log.d("HomeViewModel", "📱 当前 guardMode: ${tokenManager.getGuardMode()}")
+                    
+                    // ⭐ 关键修复：先设置为 true，防止 UI 层误判为加载失败
+                    _isProfileLoaded.value = true
+                    
+                    // ⭐ 优先从本地存储读取
+                    val localGuardMode = tokenManager.getGuardMode()
+                    _isElderMode.value = localGuardMode == 1
+                    Log.d("HomeViewModel", "📱 从本地读取长辈模式：${_isElderMode.value}, guardMode=$localGuardMode")
+                    
+                    // ⭐ 再从服务器同步最新状态
+                    Log.d("HomeViewModel", "🌐 开始请求 getUserProfile API...")
+                    val profile = apiService.getUserProfile()
+                    Log.d("HomeViewModel", "📥 getUserProfile 响应：isSuccess=${profile.isSuccess()}, code=${profile.code}, message=${profile.message}")
+                    
+                    if (profile.isSuccess() && profile.data != null) {
+                        // ⭐ 修改：使用 guardMode 字段（0普通模式 1长辈精简模式）
+                        val serverGuardMode = profile.data.guardMode
+                        _isElderMode.value = serverGuardMode == 1
+                        
+                        // ⭐ 更新本地存储
+                        tokenManager.saveGuardMode(serverGuardMode)
+                        
+                        Log.d("HomeViewModel", "✅ 从服务器同步长辈模式：${_isElderMode.value}, guardMode=$serverGuardMode")
+                        Log.d("HomeViewModel", "📊 用户信息：userId=${profile.data.id}, nickname=${profile.data.nickname}")
+                    } else {
+                        // ⭐ 关键修复：只有认证失败才触发退出登录，网络错误等使用本地缓存
+                        val isAuthError = profile.code == 401 || 
+                                         profile.message?.contains("Unauthorized", ignoreCase = true) == true ||
+                                         profile.message?.contains("token invalid", ignoreCase = true) == true ||
+                                         profile.message?.contains("token expired", ignoreCase = true) == true ||
+                                         profile.message?.contains("token失效", ignoreCase = true) == true ||
+                                         profile.message?.contains("认证失败", ignoreCase = true) == true ||
+                                         profile.message?.contains("登录已过期", ignoreCase = true) == true
+                        
+                        if (isAuthError) {
+                            Log.e("HomeViewModel", "❌ 认证失败，需要重新登录：code=${profile.code}, message=${profile.message}")
+                            _isProfileLoaded.value = false  // ⭐ 明确标记为未加载
+                            onAuthFailure?.invoke()
+                            return@launch
+                        } else {
+                            // 网络错误、服务器错误等，使用本地缓存
+                            // ⭐ 保持 _isProfileLoaded = true，不触发退出登录
+                            Log.w("HomeViewModel", "⚠️ 获取用户信息失败（非认证错误），使用本地缓存：code=${profile.code}, message=${profile.message}")
+                        }
+                    }
+                    
+                    // ⭐ 修复：无论长辈模式还是普通模式，都保持 WebSocket 连接
+                    // 普通用户需要通过 WebSocket 接收长辈的代叫车确认/拒绝响应
+                    // ⭐ 新增：防抖机制，避免重复连接
+                    if (!webSocketClient.isConnected() && !isConnectingWebSocket) {
+                        Log.d("HomeViewModel", "🔌 WebSocket 未连接，开始连接...")
+                        isConnectingWebSocket = true
+                        try {
+                            connectWebSocketForElderMode()
+                        } finally {
+                            // ⭐ 延迟重置标记，给连接留出时间
+                            kotlinx.coroutines.delay(2000)
+                            isConnectingWebSocket = false
+                        }
+                    } else if (webSocketClient.isConnected()) {
+                        Log.d("HomeViewModel", "✅ WebSocket 已连接，跳过重复连接")
+                    } else {
+                        Log.d("HomeViewModel", "⏳ WebSocket 正在连接中，跳过")
+                    }
+                    
+                    // ⭐ 关键修复：根据模式执行不同的业务逻辑
+                    if (_isElderMode.value) {
+                        // 长辈模式：启动独立定位 + 加载亲友列表
+                        Log.d("HomeViewModel", "👴 长辈模式：启动独立定位和加载亲友列表")
+                        startIndependentLocation()
+                        loadGuardianInfo()
+                        // ⭐ 启动后台定位追踪服务（确保持续获取位置）
+                        startBackgroundTracking()
+                    } else {
+                        // 普通模式：加载长辈列表（用于帮长辈叫车）
+                        Log.d("HomeViewModel", "👤 普通模式：加载长辈列表")
+                        loadElderList(forceRefresh = false)
+                    }
+                } catch (e: Exception) {
+                    Log.e("HomeViewModel", "❌ 检查长辈模式异常", e)
+                    isConnectingWebSocket = false  // ⭐ 异常时重置标记
+                    // ⭐ 关键修复：只有在认证相关错误时才触发退出登录
+                    // 网络异常、超时等情况不应踢用户回登录页
+                    val isAuthError = e.message?.contains("401") == true || 
+                                     e.message?.contains("Unauthorized", ignoreCase = true) == true ||
+                                     e.message?.contains("token invalid", ignoreCase = true) == true ||
+                                     e.message?.contains("token expired", ignoreCase = true) == true
+                    if (isAuthError) {
+                        Log.w("HomeViewModel", "⚠️ Token已失效，需要重新登录")
+                        _isProfileLoaded.value = false  // ⭐ 明确标记为未加载
+                        onAuthFailure?.invoke()
+                    } else {
+                        // ⭐ 其他异常（网络错误等）不影响自动登录，继续使用本地缓存
+                        // ⭐ 保持 _isProfileLoaded = true，不触发退出登录
+                        Log.w("HomeViewModel", "⚠️ 网络异常，使用本地缓存的长辈模式：${_isElderMode.value}")
+                    }
+                } finally {
+                    // ⭐ 关键修复：无论成功还是失败，都要重置标志
+                    isCheckingElderMode = false
+                    Log.d("HomeViewModel", "✅ checkElderMode 执行完成，重置标志")
+                    Log.d("HomeViewModel", "📊 最终状态：isElderMode=${_isElderMode.value}, isProfileLoaded=${_isProfileLoaded.value}")
+                    Log.d("HomeViewModel", "📊 WebSocket 连接状态：${webSocketClient.isConnected()}")
+                }
+            }
+        }
+        
+        /**
+         * ⭐ 新增：加载亲友列表（长辈模式）
+         */
+        fun loadGuardianInfo() {
+            viewModelScope.launch {
+                try {
+                    val userId = tokenManager.getUserId()
+                    if (userId == null) {
+                        Log.w("HomeViewModel", "用户未登录，无法获取亲友列表")
+                        return@launch
+                    }
+                    
+                    Log.d("HomeViewModel", "开始获取亲友列表，userId=$userId")
+                    
+                    val response = apiService.getMyGuardians(userId)
+                    Log.d("HomeViewModel", "API 响应：isSuccess=${response.isSuccess()}, data=${response.data}, message=${response.message}")
+                    
+                    if (response.isSuccess()) {
+                        val dataList = response.data ?: emptyList()
+                        _guardianInfoList.value = dataList
+                        Log.d("HomeViewModel", "✅ 亲友列表更新成功：${dataList.size} 个")
+                        dataList.forEachIndexed { index, guardian ->
+                            Log.d("HomeViewModel", "  [$index] userId=${guardian.userId}, name=${guardian.name}, phone=${guardian.phone}, realName=${guardian.realName}")
+                        }
+                    } else {
+                        Log.w("HomeViewModel", "❌ 获取亲友列表失败：${response.message}")
+                        _guardianInfoList.value = emptyList()
+                    }
+                } catch (e: Exception) {
+                    Log.e("HomeViewModel", "❌ loadGuardianInfo exception", e)
+                    _guardianInfoList.value = emptyList()
+                }
+            }
+        }
+        
+        /**
+         * ⭐ 新增：一键解绑所有亲友（长辈模式）
+         */
+        fun unbindAllGuardians(
+            onSuccess: () -> Unit = {},
+            onError: (String) -> Unit = {}
+        ) {
+            viewModelScope.launch {
+                try {
+                    val userId = tokenManager.getUserId()
+                    if (userId == null) {
+                        onError("用户未登录")
+                        return@launch
+                    }
+                    
+                    Log.d("HomeViewModel", "开始一键解绑所有亲友")
+                    
+                    val response = apiService.unbindAllGuardians(userId)
+                    if (response.isSuccess()) {
+                        Log.d("HomeViewModel", "解绑成功")
+                        _guardianInfoList.value = emptyList()
+                        onSuccess()
+                        // 刷新用户信息
+                        loadProfile()
+                    } else {
+                        Log.e("HomeViewModel", "解绑失败：${response.message}")
+                        onError(response.message ?: "解绑失败")
+                    }
+                } catch (e: Exception) {
+                    Log.e("HomeViewModel", "unbindAllGuardians exception", e)
+                    onError(e.message ?: "网络错误")
+                }
+            }
+        }
+    
+        // ⭐ 新增：独立定位客户端（不依赖地图）
+        private var locationClient: AMapLocationClient? = null
+        
+        /**
+         * ⭐ 新增：启动独立定位（用于长辈模式）
+         */
+        fun startIndependentLocation() {
+            // ⭐ 修复：防止重复启动定位
+            if (locationClient != null) {
+                Log.d("HomeViewModel", "⚠️ 定位客户端已存在，跳过重复启动")
+                return
+            }
+            
+            Log.d("HomeViewModel", "=== 启动独立定位 ===")
+            
+            try {
+                // 创建新的定位客户端
+                locationClient = AMapLocationClient(appContext)
+                
+                // 配置定位选项
+                val option = AMapLocationClientOption().apply {
+                    // ⭐ 修复：使用高精度模式（GPS+网络），优先GPS但允许降级
+                    locationMode = AMapLocationClientOption.AMapLocationMode.Hight_Accuracy
+                    // 设置是否返回地址信息
+                    isNeedAddress = true
+                    // 设置是否允许模拟位置
+                    isMockEnable = false
+                    // ⭐ 修复：设置定位间隔为5秒,减少频繁定位
+                    interval = 5000
+                    // ⭐ 修改：禁用单次定位模式，使用连续定位
+                    isOnceLocation = false
+                    isOnceLocationLatest = false
+                    // 设置定位超时时间
+                    httpTimeOut = 20000
+                    // ⭐ 新增：设置定位超时后不返回上次位置
+                    isLocationCacheEnable = false
+                    // ⭐ 新增：设置是否使用GPS
+                    isGpsFirst = true
+                }
+                
+                locationClient?.setLocationOption(option)
+                
+                // 设置定位监听器
+                locationClient?.setLocationListener { location ->
+                    if (location != null) {
+                        when (location.errorCode) {
+                            0 -> {
+                                // 定位成功
+                                Log.d("HomeViewModel", "📍 独立定位成功：lat=${location.latitude}, lng=${location.longitude}, accuracy=${location.accuracy}m, provider=${location.provider}")
+                                updateCurrentLocation(location.latitude, location.longitude)
+                                updateLocationAccuracy(location.accuracy)
+                            }
+                            else -> {
+                                // 定位失败
+                                Log.e("HomeViewModel", "❌ 独立定位失败：errorCode=${location.errorCode}, errorInfo=${location.errorInfo}")
+                            }
+                        }
+                    } else {
+                        Log.e("HomeViewModel", "❌ 独立定位返回 null")
+                    }
+                }
+                
+                // 启动定位
+                locationClient?.startLocation()
+                Log.d("HomeViewModel", "✅ 独立定位已启动（高精度模式，GPS优先）")
+                
+            } catch (e: Exception) {
+                Log.e("HomeViewModel", "❌ 启动独立定位异常", e)
+            }
+        }
+        
+        /**
+         * ⭐ 新增：停止独立定位
+         */
+        fun stopIndependentLocation() {
+            Log.d("HomeViewModel", "=== 停止独立定位 ===")
+            locationClient?.stopLocation()
+            locationClient?.onDestroy()
+            locationClient = null
+        }
+        
+        // ========== ⭐ 新增：后台定位追踪服务 ==========
+        
+        /**
+         * ⭐ 新增：启动后台定位追踪服务
+         * 用于确保应用在后台时也能持续获取位置，维持WebSocket连接
+         */
+        fun startBackgroundTracking() {
+            Log.d("HomeViewModel", "🚀 启动后台定位追踪服务")
+            try {
+                val intent = Intent(appContext, com.example.myapplication.service.LocationTrackingService::class.java).apply {
+                    action = com.example.myapplication.service.LocationTrackingService.ACTION_START_TRACKING
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    appContext.startForegroundService(intent)
+                } else {
+                    appContext.startService(intent)
+                }
+                Log.d("HomeViewModel", "✅ 后台定位追踪服务已启动")
+            } catch (e: Exception) {
+                Log.e("HomeViewModel", "❌ 启动后台定位追踪服务失败", e)
+            }
+        }
+        
+        /**
+         * ⭐ 新增：停止后台定位追踪服务
+         */
+        fun stopBackgroundTracking() {
+            Log.d("HomeViewModel", "🛑 停止后台定位追踪服务")
+            try {
+                val intent = Intent(appContext, com.example.myapplication.service.LocationTrackingService::class.java).apply {
+                    action = com.example.myapplication.service.LocationTrackingService.ACTION_STOP_TRACKING
+                }
+                appContext.startService(intent)
+                Log.d("HomeViewModel", "✅ 后台定位追踪服务已停止")
+            } catch (e: Exception) {
+                Log.e("HomeViewModel", "❌ 停止后台定位追踪服务失败", e)
+            }
+        }
+        
+        // ========== ⭐ 帮长辈叫车功能 ==========
+        
+        /**
+         * ⭐ 新增：帮长辈叫车（需要长辈确认）
+         * @param elderUserId 长辈用户ID
+         * @param poiName 目的地名称
+         * @param destLat 目的地纬度
+         * @param destLng 目的地经度
+         * @param startLat 起点纬度（可选，默认使用当前位置）
+         * @param startLng 起点经度（可选，默认使用当前位置）
+         */
+        fun createProxyOrderForElder(
+            elderUserId: Long,
+            poiName: String,
+            destLat: Double,
+            destLng: Double,
+            startLat: Double? = null,
+            startLng: Double? = null
+        ) {
+            // ⭐ 修复：使用 viewModelScope + SupervisorJob，防止切换后台时协程被取消
+            viewModelScope.launch(Dispatchers.IO + SupervisorJob()) {
+                try {
+                    val userId = tokenManager.getUserId()
+                    if (userId == null) {
+                        withContext(Dispatchers.Main) {
+                            _orderState.value = OrderState.Error("用户未登录")
+                        }
+                        return@launch
+                    }
+                    
+                    // ⭐ 新增：打印当前用户信息和目标长辈信息
+                    Log.d("HomeViewModel", "🔍 当前用户ID: $userId")
+                    Log.d("HomeViewModel", "🔍 目标长辈ID: $elderUserId")
+                    Log.d("HomeViewModel", "🔍 是否为同一人: ${userId == elderUserId}")
+                    
+                    // ⭐ 修复：移除冗余的绑定检查，因为用户已经从长辈列表中选择，说明已绑定
+                    // 原来的检查会导致竞态条件问题：用户选择长辈后，列表可能被清空或更新，导致检查失败
+                    Log.d("HomeViewModel", "🚗 开始帮长辈叫车：elderUserId=$elderUserId, poiName=$poiName")
+                    
+                    withContext(Dispatchers.Main) {
+                        _isCreatingOrder.value = true
+                        _orderState.value = OrderState.Loading
+                    }
+                    
+                    // ⭐ 关键修复：按照后端API文档构造请求
+                    val request = com.example.myapplication.data.model.CreateOrderForElderRequest(
+                        elderId = elderUserId,              // ⭐ 必填：长辈的用户ID
+                        startLat = startLat ?: currentLocation.value?.latitude,  // ⭐ 起点纬度（可选）
+                        startLng = startLng ?: currentLocation.value?.longitude, // ⭐ 起点经度（可选）
+                        destLat = destLat,                  // 终点纬度
+                        destLng = destLng,                  // 终点经度
+                        destAddress = poiName.trim(),       // ⭐ 必填：目的地名称（不能为null或空字符串）
+                        needConfirm = true                  // ⭐ 默认需要长辈确认
+                    )
+                    
+                    Log.d("HomeViewModel", "📤 发送代叫车请求：$request")
+                    Log.d("HomeViewModel", "📤 请求详情：elderId=${request.elderId}, destAddress=${request.destAddress}, needConfirm=${request.needConfirm}")
+                    Log.d("HomeViewModel", "📤 起点坐标：lat=${request.startLat}, lng=${request.startLng}")
+                    Log.d("HomeViewModel", "📤 终点坐标：lat=${request.destLat}, lng=${request.destLng}")
+                    
+                    // ⭐ 关键修复：网络请求不受 UI 生命周期影响
+                    val response = apiService.createOrderForElder(userId, request)
+                    
+                    Log.d("HomeViewModel", "📥 收到响应：isSuccess=${response.isSuccess()}, message=${response.message}, code=${response.code}, data=${response.data}")
+                    
+                    withContext(Dispatchers.Main) {
+                        if (response.isSuccess()) {
+                            // ⭐ 修复：处理后端返回的不同数据类型
+                            val responseData = response.data
+                            when (responseData) {
+                                is Order -> {
+                                    // 后端返回完整的订单对象
+                                    Log.d("HomeViewModel", "✅ 代叫车请求已发送，订单ID: ${responseData.id}, 状态: ${responseData.status}")
+                                    _orderState.value = OrderState.Success(responseData)
+                                    _events.send(HomeEvent.OrderCreated(responseData))
+                                }
+                                is Map<*, *> -> {
+                                    // ⭐ 修复：后端返回 Map 类型（LinkedTreeMap），需要转换
+                                    Log.d("HomeViewModel", "⚠️ 后端返回 Map 类型，尝试解析...")
+                                    try {
+                                        // 从 Map 中提取订单ID
+                                        val orderId = (responseData["id"] as? Number)?.toLong()
+                                        val orderNo = responseData["orderNo"] as? String
+                                        val elderUserId = (responseData["elderUserId"] as? Number)?.toLong()
+                                        val destLat = (responseData["destLat"] as? Number)?.toDouble()
+                                        val destLng = (responseData["destLng"] as? Number)?.toDouble()
+                                        val destAddress = responseData["destAddress"] as? String
+                                        val status = (responseData["status"] as? Number)?.toInt()
+                                        
+                                        Log.d("HomeViewModel", "✅ 代叫车请求已发送")
+                                        Log.d("HomeViewModel", "  - 订单ID: $orderId")
+                                        Log.d("HomeViewModel", "  - 订单号: $orderNo")
+                                        Log.d("HomeViewModel", "  - 长辈ID: $elderUserId")
+                                        Log.d("HomeViewModel", "  - 目的地: $destAddress")
+                                        Log.d("HomeViewModel", "  - 状态: $status")
+                                        
+                                        // ⭐ 创建一个临时 Order 对象用于UI显示
+                                        val tempOrder = Order(
+                                            id = orderId ?: 0L,
+                                            orderNo = orderNo ?: "",
+                                            userId = elderUserId ?: 0L,
+                                            driverId = null,  // ⭐ 修复：添加必需的driverId参数
+                                            guardianUserId = userId,  // ⭐ 修复：使用guardianUserId代替proxyUserId
+                                            destLat = destLat,
+                                            destLng = destLng,
+                                            poiName = null,
+                                            destAddress = destAddress,
+                                            platformUsed = null,
+                                            platformOrderId = null,
+                                            estimatePrice = null,
+                                            status = status ?: 0,
+                                            createTime = java.time.LocalDateTime.now().toString()
+                                        )
+                                        
+                                        _orderState.value = OrderState.Success(tempOrder)
+                                        _events.send(HomeEvent.OrderCreated(tempOrder))
+                                    } catch (e: Exception) {
+                                        Log.e("HomeViewModel", "❌ 解析 Map 数据失败", e)
+                                        _orderState.value = OrderState.Error("订单创建成功，但解析响应失败")
+                                    }
+                                }
+                                is String -> {
+                                    // 后端返回字符串（可能是订单ID或消息）
+                                    Log.d("HomeViewModel", "✅ 代叫车请求已发送，返回数据: $responseData")
+                                    _orderState.value = OrderState.Error("${response.message ?: "订单创建成功"}：$responseData")
+                                }
+                                else -> {
+                                    // 其他情况
+                                    Log.w("HomeViewModel", "⚠️ 未知返回类型: ${responseData?.javaClass?.name}")
+                                    _orderState.value = OrderState.Error(response.message ?: "订单创建成功，但未返回订单详情")
+                                }
+                            }
+                        } else {
+                            val errorMsg = response.message ?: "代叫车失败"
+                            Log.e("HomeViewModel", "❌ 代叫车失败：errorMsg=$errorMsg, code=${response.code}")
+                            
+                            // ⭐ 关键修复：后端返回的 403 错误需要明确提示
+                            val userFriendlyMsg = when {
+                                response.code == 403 -> "您未绑定该长辈，无法代叫车。请先在个人中心完成绑定。"
+                                response.code == 401 -> "登录已过期，请重新登录"
+                                response.code == 404 -> "长辈不存在或已解绑"
+                                errorMsg.contains("未绑定") || errorMsg.contains("绑定") -> "请先在亲情守护中绑定该长辈"
+                                else -> errorMsg
+                            }
+                            
+                            _orderState.value = OrderState.Error(userFriendlyMsg)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("HomeViewModel", "❌ 代叫车异常", e)
+                    withContext(Dispatchers.Main) {
+                        _orderState.value = OrderState.Error(e.message ?: "网络错误")
+                    }
+                } finally {
+                    withContext(Dispatchers.Main) {
+                        _isCreatingOrder.value = false
+                    }
+                }
+            }
+        }
+        
+        /**
+         * ⭐ 新增：长辈确认代叫车
+         * @param orderId 订单ID
+         * @param confirmed true-同意，false-拒绝
+         * @param rejectReason 拒绝原因（可选）
+         */
+        fun confirmProxyOrder(
+            orderId: Long,
+            confirmed: Boolean,
+            rejectReason: String? = null
+        ) {
+            viewModelScope.launch {
+                try {
+                    val userId = tokenManager.getUserId()
+                    if (userId == null) {
+                        Log.e("HomeViewModel", "❌ 用户未登录")
+                        return@launch
+                    }
+                    
+                    Log.d("HomeViewModel", "📱 长辈确认代叫车：orderId=$orderId, confirmed=$confirmed")
+                    
+                    val request = com.example.myapplication.data.model.ConfirmProxyOrderRequest(
+                        confirmed = confirmed,
+                        rejectReason = rejectReason
+                    )
+                    
+                    val response = apiService.confirmProxyOrder(userId, orderId, request)
+                    
+                    if (response.isSuccess()) {
+                        Log.d("HomeViewModel", "✅ 确认成功：${response.message}")
+                        
+                        // ⭐ 修复：确认后跳转到行程追踪页
+                        if (confirmed) {
+                            Log.d("HomeViewModel", "🚀 长辈已同意，准备跳转到行程追踪页: orderId=$orderId")
+                            _events.send(HomeEvent.NavigateToOrderTracking(orderId))
+                        } else {
+                            Log.d("HomeViewModel", "❌ 长辈已拒绝，原因：$rejectReason")
+                        }
+                    } else {
+                        Log.e("HomeViewModel", "❌ 确认失败：${response.message}")
+                    }
+                } catch (e: Exception) {
+                    Log.e("HomeViewModel", "❌ 确认异常", e)
+                }
+            }
+        }
+        
+        /**
+         * ⭐ 新增：加载我的长辈列表（用于帮长辈叫车）
+         * 注意：只有普通账户才能调用此接口，长辈账户会返回403
+         */
+        fun loadElderList(forceRefresh: Boolean = false) {
+            // ⭐ 修复：长辈模式不需要加载长辈列表
+            if (_isElderMode.value) {
+                Log.d("HomeViewModel", "⚠️ 当前是长辈模式，跳过加载长辈列表")
+                return
+            }
+            
+            // ⭐ 低优先级7：缓存逻辑
+            if (!forceRefresh && _elderListLoaded && _elderInfoList.value.isNotEmpty()) {
+                Log.d("HomeViewModel", "👴 使用缓存的长辈列表，共 ${_elderInfoList.value.size} 个")
+                // ⭐ 新增：打印已绑定的长辈ID列表
+                val elderIds = _elderInfoList.value.map { it.userId }
+                Log.d("HomeViewModel", "👴 已绑定的长辈ID列表: $elderIds")
+                return
+            }
+            
+            viewModelScope.launch {
+                try {
+                    val userId = tokenManager.getUserId()
+                    if (userId == null) {
+                        Log.w("HomeViewModel", "用户未登录，无法获取长辈列表")
+                        return@launch
+                    }
+                    
+                    // ⭐ 关键修复：先检查用户是否为长辈模式（从服务器实时查询）
+                    Log.d("HomeViewModel", "🔍 开始检查用户模式，userId=$userId")
+                    val profileResponse = apiService.getUserProfile()
+                    Log.d("HomeViewModel", "🔍 getUserProfile 结果：isSuccess=${profileResponse.isSuccess()}, data=${profileResponse.data}")
+                    
+                    if (profileResponse.isSuccess()) {
+                        val profile = profileResponse.data
+                        Log.d("HomeViewModel", "🔍 用户信息：guardMode=${profile?.guardMode}")
+                        
+                        if (profile != null && profile.guardMode == 1) {
+                            Log.w("HomeViewModel", "⏭️ 检测到长辈账号(userId=$userId, guardMode=1)，禁止调用 /api/guard/myElders")
+                            return@launch
+                        }
+                    } else {
+                        Log.e("HomeViewModel", "❌ 获取用户信息失败：${profileResponse.message}")
+                    }
+                    
+                    Log.d("HomeViewModel", "👴 开始加载长辈列表，userId=$userId")
+                    
+                    val response = apiService.getMyElders(userId)
+                    
+                    if (response.isSuccess()) {
+                        val elderList = response.data ?: emptyList()
+                        _elderInfoList.value = elderList
+                        
+                        // ⭐ 修复：只有成功加载且有数据时才标记为已加载
+                        if (elderList.isNotEmpty()) {
+                            _elderListLoaded = true
+                            Log.d("HomeViewModel", "✅ 加载成功，共 ${elderList.size} 个长辈")
+                        } else {
+                            Log.w("HomeViewModel", "⚠️ 加载成功但列表为空，可能是真的没有绑定长辈")
+                        }
+                    } else {
+                        Log.e("HomeViewModel", "❌ 加载失败：${response.message}")
+                        _elderInfoList.value = emptyList()
+                        _elderListLoaded = false  // ⭐ 修复：失败时重置标志，允许重试
+                    }
+                } catch (e: Exception) {
+                    Log.e("HomeViewModel", "❌ loadElderList exception", e)
+                    _elderInfoList.value = emptyList()
+                    _elderListLoaded = false  // ⭐ 修复：异常时重置标志，允许重试
+                }
+            }
+        }
+        
+        /**
+         * ⭐ 高优先级2：接收代叫车请求（由 WebSocket 调用）
+         * @param orderId 订单ID
+         * @param requesterName 代叫人姓名
+         * @param destination 目的地
+         */
+        fun onProxyOrderRequestReceived(
+            orderId: Long,
+            requesterName: String,
+            destination: String
+        ) {
+            Log.d("HomeViewModel", "📩 收到代叫车请求：orderId=$orderId, from=$requesterName, to=$destination")
+            _proxyOrderRequest.value = ProxyOrderRequest(
+                orderId = orderId,
+                requesterName = requesterName,
+                destination = destination
+            )
+        }
+        
+        /**
+         * ⭐ 清除代叫车请求通知
+         */
+        fun clearProxyOrderRequest() {
+            _proxyOrderRequest.value = null
+        }
+        
+        /**
+         * ⭐ 关键修复：长辈模式连接 WebSocket 接收代叫车通知
+         */
+        private fun connectWebSocketForElderMode() {
+            viewModelScope.launch {
+                try {
+                    val userId = tokenManager.getUserId()
+                    if (userId == null) {
+                        Log.w("HomeViewModel", "⚠️ userId 为空，跳过 WebSocket 连接")
+                        return@launch
+                    }
+                    
+                    // 检查是否已经连接
+                    if (webSocketClient.isConnected()) {
+                        Log.d("HomeViewModel", "✅ WebSocket 已连接，跳过重复连接")
+                        return@launch
+                    }
+                    
+                    val token = tokenManager.getToken()
+                    if (token.isNullOrBlank()) {
+                        Log.w("HomeViewModel", "⚠️ Token 为空，跳过 WebSocket 连接")
+                        return@launch
+                    }
+                    
+                    // ⭐ 连接 WebSocket，使用 user_{userId} 作为 sessionId
+                    val wsSessionId = "user_$userId"
+                    Log.d("HomeViewModel", "🔌 开始连接 WebSocket，sessionId=$wsSessionId")
+                    webSocketClient.connect(wsSessionId, token)
+                    
+                    // ⭐ 修复：HomeViewModel 只负责建立 WebSocket 连接，不监听消息
+                    // 消息监听由 ChatViewModel 统一处理，避免重复处理
+                    Log.d("HomeViewModel", "✅ WebSocket 连接请求已发送（消息监听由 ChatViewModel 处理）")
+                    
+                } catch (e: Exception) {
+                    Log.e("HomeViewModel", "❌ WebSocket 连接异常", e)
+                }
+            }
+        }
+        
+        /**
+         * ⭐ 修复：移除 parseWebSocketMessage，消息监听由 ChatViewModel 统一处理
+         * 避免重复监听导致欢迎消息刷屏
+         */
+        
         override fun onCleared() {
             super.onCleared()
-            
             Log.d("HomeViewModel", "=== HomeViewModel onCleared 被调用 ===")
             
-            // ⭐ 销毁语音识别助手
+            // ⭐ 修复：不要断开 WebSocket，因为 ChatViewModel 可能还在使用
+            // WebSocket 是单例共享资源，由 ChatViewModel 管理生命周期
+            // if (webSocketClient.isConnected()) {
+            //     Log.d("HomeViewModel", "🔌 断开 WebSocket 连接")
+            //     webSocketClient.disconnect()
+            // }
+            Log.d("HomeViewModel", "✅ 保留 WebSocket 连接（由 ChatViewModel 管理）")
+            
+            // 清理定位客户端
+            stopIndependentLocation()
+            
+            // 清理语音识别
             speechHelper?.destroy()
             speechHelper = null
             
-            // ⭐ 取消所有协程
+            // 取消所有协程
             searchJob?.cancel()
             
             Log.d("HomeViewModel", "HomeViewModel 已清理，资源已释放")

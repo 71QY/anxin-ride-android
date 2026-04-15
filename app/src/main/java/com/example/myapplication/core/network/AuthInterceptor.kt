@@ -9,7 +9,7 @@ import okhttp3.Response
 class AuthInterceptor : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val originalRequest = chain.request()
-        val token = MyApplication.tokenManager.getTokenSync()
+        val token = MyApplication.tokenManager.getToken()
         Log.d("AuthInterceptor", "Token: ${token?.take(10)}...")
         
         val newRequest = if (!token.isNullOrBlank()) {

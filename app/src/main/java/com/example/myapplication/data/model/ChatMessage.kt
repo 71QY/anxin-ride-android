@@ -8,6 +8,7 @@ package com.example.myapplication.data.model
  * @param timestamp 时间戳
  * @param suggestions 智能体回复的建议按钮列表（可选）
  * @param imageBase64 图片的Base64编码（仅用户发送图片时使用）
+ * @param additionalImages 额外的图片列表（批量发送多张图片时使用）
  */
 data class ChatMessage(
     val id: String,
@@ -15,5 +16,6 @@ data class ChatMessage(
     val isUser: Boolean,
     val timestamp: Long,
     val suggestions: List<String>? = null,
-    val imageBase64: String? = null
+    val imageBase64: String? = null,
+    val additionalImages: List<String>? = null  // ⭐ 新增：支持多张图片
 )

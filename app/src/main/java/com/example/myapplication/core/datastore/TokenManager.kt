@@ -6,19 +6,30 @@ import android.content.SharedPreferences
 class TokenManager(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
 
-    fun getTokenSync(): String? = prefs.getString("token", null)
+    // ⭐ 统一命名：移除 Sync 后缀，所有方法均为同步读取
+    fun getToken(): String? = prefs.getString("token", null)
+    fun getUserId(): Long? = prefs.getLong("user_id", -1L).takeIf { it != -1L }
+    fun getGuardMode(): Int = prefs.getInt("guard_mode", 0)
 
-    fun getUserIdSync(): Long? = prefs.getLong("user_id", -1L).takeIf { it != -1L }
-
-    suspend fun getToken(): String? = getTokenSync()
-
-    suspend fun getUserId(): Long? = getUserIdSync()
+    suspend fun getTokenAsync(): String? = getToken()
+    suspend fun getUserIdAsync(): Long? = getUserId()
+    suspend fun getGuardModeAsync(): Int = getGuardMode()
 
     suspend fun saveToken(token: String, userId: Long) {
         prefs.edit().putString("token", token).putLong("user_id", userId).apply()
     }
+    
+    // ⭐ 新增：保存长辈模式标识
+    suspend fun saveGuardMode(guardMode: Int) {
+        prefs.edit().putInt("guard_mode", guardMode).apply()
+    }
 
     suspend fun clearToken() {
-        prefs.edit().remove("token").remove("user_id").apply()
+        prefs.edit().remove("token").remove("user_id").remove("guard_mode").apply()
+    }
+    
+    // ⭐ 新增：同步清除 Token（用于回调中）
+    fun clearTokenSync() {
+        prefs.edit().remove("token").remove("user_id").remove("guard_mode").apply()
     }
 }

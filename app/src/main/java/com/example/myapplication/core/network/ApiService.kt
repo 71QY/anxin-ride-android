@@ -2,6 +2,7 @@ package com.example.myapplication.core.network
 
 import com.example.myapplication.data.model.ChangeNicknameRequest
 import com.example.myapplication.data.model.ChangePasswordRequest
+import com.example.myapplication.data.model.CompleteProfileRequest
 import com.example.myapplication.data.model.CreateOrderRequest
 import com.example.myapplication.data.model.EmergencyContact
 import com.example.myapplication.data.model.LoginRequest
@@ -21,6 +22,21 @@ import com.example.myapplication.data.model.AgentLocationRequest
 import com.example.myapplication.data.model.AgentCleanupRequest
 import com.example.myapplication.data.model.AgentSearchResponse
 import com.example.myapplication.data.model.PoiDetailResponse
+import com.example.myapplication.data.model.AddElderRequest
+import com.example.myapplication.data.model.RegisterElderRequest  // ⭐ 新增：帮长辈注册请求
+import com.example.myapplication.data.model.BindExistingElderRequest  // ⭐ 新增：绑定已有长辈请求
+import com.example.myapplication.data.model.CreateOrderForElderRequest
+import com.example.myapplication.data.model.ConfirmProxyOrderRequest  // ⭐ 新增：确认代叫车请求
+import com.example.myapplication.data.model.ElderInfo  // ⭐ 新增：亲情守护数据模型
+import com.example.myapplication.data.model.GuardianInfo  // ⭐ 新增：亲情守护数据模型
+import com.example.myapplication.data.model.OrderChatMessage  // ⭐ 新增：订单聊天消息
+import com.example.myapplication.data.model.SendChatMessageRequest  // ⭐ 新增：发送聊天消息请求
+import com.example.myapplication.data.model.VoiceToTextResponse  // ⭐ 新增：语音转文字响应
+import com.example.myapplication.data.model.TextToSpeechResponse  // ⭐ 新增：文字转语音响应
+import com.example.myapplication.data.model.CallDriverResponse  // ⭐ 新增：呼叫司机响应
+import com.example.myapplication.data.model.CallGuardianResponse  // ⭐ 新增：呼叫亲友响应
+import com.example.myapplication.data.model.PrivateChatMessage  // ⭐ 新增：私聊消息
+import com.example.myapplication.data.model.SendPrivateMessageRequest  // ⭐ 新增：发送私聊请求
 import okhttp3.MultipartBody
 import retrofit2.http.*
 
@@ -38,6 +54,14 @@ interface ApiService {
 
     @POST("auth/forgot-password")
     suspend fun forgotPassword(@Body request: ChangePasswordRequest): Result<Unit>
+    
+    // ⭐ 新增：退出登录接口
+    @POST("auth/logout")
+    suspend fun logout(): Result<Unit>
+    
+    // ⭐ 新增：完善账号信息接口
+    @POST("user/complete-profile")
+    suspend fun completeProfile(@Body request: CompleteProfileRequest): Result<Unit>
 
     @POST("user/change-password")
     suspend fun changePassword(@Body request: ChangePasswordRequest): Result<Unit>
@@ -176,7 +200,7 @@ interface ApiService {
     @POST("user/avatar")
     suspend fun uploadAvatar(
         @Part avatar: MultipartBody.Part
-    ): Result<AvatarResponse>
+    ): Result<String>  // ⭐ 修复：后端返回 data 是字符串（头像 URL）
 
     // ⭐ 新增：获取头像图片（不需要认证）
     @GET("user/avatar/{filename}")
@@ -193,6 +217,219 @@ interface ApiService {
 
     @POST("user/realname")
     suspend fun realNameAuth(@Body request: RealNameRequest): Result<Unit>
+
+    // ========== 亲情守护接口 (对齐后端 /api/guard/*) ==========
+
+    /**
+     * 帮长辈注册账号（v2.0 新接口）⭐
+     * POST /api/guard/register-elder
+     */
+    @POST("guard/register-elder")
+    suspend fun registerElder(
+        @Header("X-User-Id") userId: Long,
+        @Body request: RegisterElderRequest
+    ): Result<String>  // ⭐ 修复：后端返回 data 为字符串
+
+    /**
+     * 绑定已有长辈账号（v2.0 新接口）⭐
+     * POST /api/guard/bind-existing-elder
+     */
+    @POST("guard/bind-existing-elder")
+    suspend fun bindExistingElder(
+        @Header("X-User-Id") userId: Long,
+        @Body request: BindExistingElderRequest
+    ): Result<String>  // ⭐ 修复：后端返回 data 为字符串
+
+    /**
+     * 添加长辈（旧接口，保留兼容）
+     * POST /api/guard/add
+     */
+    @POST("guard/add")
+    suspend fun addElder(
+        @Header("X-User-Id") userId: Long,
+        @Body request: AddElderRequest
+    ): Result<Long>
+
+    /**
+     * 获取我的长辈列表（亲友操作）
+     * GET /api/guard/myElders
+     */
+    @GET("guard/myElders")
+    suspend fun getMyElders(
+        @Header("X-User-Id") userId: Long
+    ): Result<List<ElderInfo>>
+
+    /**
+     * 获取我的亲友列表（长辈操作）
+     * GET /api/guard/myGuardians
+     */
+    @GET("guard/myGuardians")
+    suspend fun getMyGuardians(
+        @Header("X-User-Id") userId: Long
+    ): Result<List<GuardianInfo>>
+
+    /**
+     * 一键解绑所有亲友（长辈操作）
+     * POST /api/guard/unbindAll
+     */
+    @POST("guard/unbindAll")
+    suspend fun unbindAllGuardians(
+        @Header("X-User-Id") userId: Long
+    ): Result<Unit>
+
+    /**
+     * 单条解绑（亲友操作）
+     * POST /api/guard/unbindOne/{guardId}
+     */
+    @POST("guard/unbindOne/{guardId}")
+    suspend fun unbindOneGuardian(
+        @Header("X-User-Id") userId: Long,
+        @Path("guardId") guardId: Long
+    ): Result<Unit>
+
+    /**
+     * 代叫车（亲友操作）
+     * POST /api/guard/proxyOrder
+     */
+    // ⭐ 修复：代叫车接口，后端可能返回字符串或对象，使用 Any 类型
+    @POST("guard/proxyOrder")
+    suspend fun createOrderForElder(
+        @Header("X-User-Id") userId: Long,
+        @Body request: CreateOrderForElderRequest
+    ): Result<Any>
+
+    /**
+     * ⭐ 新增：长辈确认代叫车
+     * POST /api/guard/confirmProxyOrder/{orderId}
+     */
+    @POST("guard/confirmProxyOrder/{orderId}")
+    suspend fun confirmProxyOrder(
+        @Header("X-User-Id") userId: Long,
+        @Path("orderId") orderId: Long,
+        @Body request: ConfirmProxyOrderRequest
+    ): Result<Map<String, Any>>
+
+    /**
+     * 查询代叫订单列表（亲友操作）
+     * GET /api/guard/proxyOrders
+     */
+    @GET("guard/proxyOrders")
+    suspend fun getProxyOrders(
+        @Header("X-User-Id") userId: Long
+    ): Result<List<Order>>
+
+    /**
+     * 查询当前订单（长辈/亲友通用）
+     * GET /api/order/current
+     */
+    @GET("order/current")
+    suspend fun getCurrentTrip(
+        @Header("X-User-Id") userId: Long
+    ): Result<Order?>
+
+    /**
+     * 呼叫司机
+     * GET /api/guard/callDriver/{orderId}
+     */
+    @GET("guard/callDriver/{orderId}")
+    suspend fun callDriver(
+        @Header("X-User-Id") userId: Long,
+        @Path("orderId") orderId: Long
+    ): Result<CallDriverResponse>
+
+    /**
+     * 呼叫亲友（长辈操作）
+     * GET /api/guard/callGuardian
+     */
+    @GET("guard/callGuardian")
+    suspend fun callGuardian(
+        @Header("X-User-Id") userId: Long
+    ): Result<CallGuardianResponse>
+
+    // ========== 订单群聊接口 (对齐后端 /api/chat/*) ==========
+
+    /**
+     * 获取订单群聊历史
+     * GET /api/chat/order/{orderId}
+     */
+    @GET("chat/order/{orderId}")
+    suspend fun getOrderChatHistory(
+        @Header("X-User-Id") userId: Long,
+        @Path("orderId") orderId: Long
+    ): Result<List<OrderChatMessage>>
+
+    /**
+     * 发送聊天消息
+     * POST /api/chat/order/{orderId}
+     */
+    @POST("chat/order/{orderId}")
+    suspend fun sendOrderChatMessage(
+        @Header("X-User-Id") userId: Long,
+        @Path("orderId") orderId: Long,
+        @Body request: SendChatMessageRequest
+    ): Result<Unit>
+
+    /**
+     * 语音转文字
+     * POST /api/chat/voiceToText
+     */
+    @POST("chat/voiceToText")
+    suspend fun voiceToText(
+        @Header("X-User-Id") userId: Long,
+        @Body audioData: String  // Base64编码的音频数据
+    ): Result<VoiceToTextResponse>
+
+    /**
+     * 文字转语音
+     * GET /api/chat/textToSpeech?text=xxx
+     */
+    @GET("chat/textToSpeech")
+    suspend fun textToSpeech(
+        @Header("X-User-Id") userId: Long,
+        @Query("text") text: String
+    ): Result<TextToSpeechResponse>
+
+    // ========== 私聊接口 (对齐后端 /api/chat/private/*) ==========
+
+    /**
+     * 获取私聊历史
+     * GET /api/chat/private/history/{targetUserId}
+     */
+    @GET("chat/private/history/{targetUserId}")
+    suspend fun getPrivateChatHistory(
+        @Header("X-User-Id") userId: Long,
+        @Path("targetUserId") targetUserId: Long
+    ): Result<List<PrivateChatMessage>>
+
+    /**
+     * 发送私聊消息
+     * POST /api/chat/private/send/{receiverId}
+     */
+    @POST("chat/private/send/{receiverId}")
+    suspend fun sendPrivateMessage(
+        @Header("X-User-Id") userId: Long,
+        @Path("receiverId") receiverId: Long,
+        @Body request: SendPrivateMessageRequest
+    ): Result<String>  // ⭐ 修改：后端返回 data 为字符串（消息ID或成功提示）
+
+    /**
+     * 标记已读
+     * POST /api/chat/private/read/{senderId}
+     */
+    @POST("chat/private/read/{senderId}")
+    suspend fun markAsRead(
+        @Header("X-User-Id") userId: Long,
+        @Path("senderId") senderId: Long
+    ): Result<Unit>
+
+    /**
+     * 查询未读数
+     * GET /api/chat/private/unread
+     */
+    @GET("chat/private/unread")
+    suspend fun getUnreadCount(
+        @Header("X-User-Id") userId: Long
+    ): Result<Map<Long, Int>>  // Map<senderId, unreadCount>
 }
 
 // ⭐ 新增：路线规划响应

@@ -52,8 +52,10 @@ class AgentFloatService : Service() {
         super.onCreate()
         Log.d(TAG, " Float service onCreate called")
         
+        // ⭐ 修改：先启动前台服务，再创建悬浮窗
         startForegroundService()
         
+        // ⭐ 修改：延迟创建悬浮窗，确保前台服务已启动
         createFloatWindow()
     }
 
@@ -115,9 +117,12 @@ class AgentFloatService : Service() {
 
     @SuppressLint("ClickableViewAccessibility")
     private fun createFloatWindow() {
+        // ⭐ 修改：检查悬浮窗权限
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             if (!Settings.canDrawOverlays(this)) {
-                Log.e(TAG, "No overlay permission, stopping service")
+                Log.e(TAG, "❌ 没有悬浮窗权限，停止服务")
+                // ⭐ 修改：先停止前台服务，再停止自身
+                stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 return
             }
@@ -140,7 +145,7 @@ class AgentFloatService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = 50
-            y = 200
+            y = 162  // ⭐ 修复：上移1cm（200-38=162）
         }
         layoutParams = wmParams
 

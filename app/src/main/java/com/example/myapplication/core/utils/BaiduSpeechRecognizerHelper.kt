@@ -30,58 +30,87 @@ class BaiduSpeechRecognizerHelper(
     private val secretKey = BuildConfig.BAIDU_SECRET_KEY
     
     init {
-        // 初始化百度语音识别
-        eventManager = EventManagerFactory.create(context, "asr")
+        Log.d(TAG, "🔧 BaiduSpeechRecognizerHelper 初始化开始")
+        Log.d(TAG, "   配置信息 - appId=${if (appId.isBlank()) "[EMPTY]" else "[SET]"}, apiKey=${if (apiKey.isBlank()) "[EMPTY]" else "[SET]"}, secretKey=${if (secretKey.isBlank()) "[EMPTY]" else "[SET]"}")
+        Log.d(TAG, "   当前语言: $language")
         
-        // 设置监听器
-        eventManager?.registerListener(object : EventListener {
-            override fun onEvent(name: String, params: String?, data: ByteArray?, offset: Int, length: Int) {
-                Log.d(TAG, "📢 百度语音事件: $name")
+        // ⭐ 检查配置是否为空
+        if (appId.isBlank() || apiKey.isBlank() || secretKey.isBlank()) {
+            Log.e(TAG, "❌ 百度语音配置为空！BuildConfig 没有正确读取配置")
+            Log.e(TAG, "   appId 长度: ${appId.length}")
+            Log.e(TAG, "   apiKey 长度: ${apiKey.length}")
+            Log.e(TAG, "   secretKey 长度: ${secretKey.length}")
+            // init 块不能使用 return，通过后续判断阻止初始化
+        } else {
+            try {
+                // 初始化百度语音识别
+                Log.d(TAG, "📦 开始创建 EventManager...")
+                eventManager = EventManagerFactory.create(context, "asr")
+                Log.d(TAG, "✅ EventManager 创建成功: ${eventManager != null}")
                 
-                when (name) {
-                    SpeechConstant.CALLBACK_EVENT_ASR_READY -> {
-                        Log.d(TAG, "✅ 引擎就绪，可以开始说话")
-                    }
-                    SpeechConstant.CALLBACK_EVENT_ASR_BEGIN -> {
-                        Log.d(TAG, "🎤 开始说话（检测到声音）")
-                    }
-                    SpeechConstant.CALLBACK_EVENT_ASR_VOLUME -> {
-                        // 音量回调，可选
-                    }
-                    SpeechConstant.CALLBACK_EVENT_ASR_PARTIAL -> {
-                        // 部分识别结果
-                        handlePartialResult(params)
-                    }
-                    SpeechConstant.CALLBACK_EVENT_ASR_FINISH -> {
-                        // 识别完成
-                        Log.d(TAG, "✅ 识别结束事件，原始参数: $params")
-                        handleFinalResult(params)
-                        isListening = false
-                    }
-                    SpeechConstant.CALLBACK_EVENT_ASR_ERROR -> {
-                        Log.e(TAG, "Voice recognition error: $params")
-                        
-                        try {
-                            val json = JSONObject(params ?: "{}")
-                            val error = json.optInt("error", -1)
-                            val desc = json.optString("desc", "Unknown error")
+                if (eventManager != null) {
+                    // 设置监听器
+                    Log.d(TAG, "🎧 注册事件监听器...")
+                    eventManager?.registerListener(object : EventListener {
+                        override fun onEvent(name: String, params: String?, data: ByteArray?, offset: Int, length: Int) {
+                            Log.d(TAG, "📢 百度语音事件: $name")
                             
-                            if (error == 4 || desc.contains("-3004")) {
-                                Log.e(TAG, "Baidu voice authentication failed! Check configuration.")
+                            when (name) {
+                                SpeechConstant.CALLBACK_EVENT_ASR_READY -> {
+                                    Log.d(TAG, "✅ 引擎就绪，可以开始说话")
+                                }
+                                SpeechConstant.CALLBACK_EVENT_ASR_BEGIN -> {
+                                    Log.d(TAG, "🎤 开始说话（检测到声音）")
+                                }
+                                SpeechConstant.CALLBACK_EVENT_ASR_VOLUME -> {
+                                    // 音量回调，可选
+                                }
+                                SpeechConstant.CALLBACK_EVENT_ASR_PARTIAL -> {
+                                    // 部分识别结果
+                                    handlePartialResult(params)
+                                }
+                                SpeechConstant.CALLBACK_EVENT_ASR_FINISH -> {
+                                    // 识别完成
+                                    Log.d(TAG, "✅ 识别结束事件，原始参数: $params")
+                                    handleFinalResult(params)
+                                    isListening = false
+                                }
+                                SpeechConstant.CALLBACK_EVENT_ASR_ERROR -> {
+                                    Log.e(TAG, "❌ 语音识别错误: $params")
+                                    
+                                    try {
+                                        val json = JSONObject(params ?: "{}")
+                                        val error = json.optInt("error", -1)
+                                        val desc = json.optString("desc", "Unknown error")
+                                        
+                                        if (error == 4 || desc.contains("-3004")) {
+                                            Log.e(TAG, "百度语音认证失败！请检查配置。")
+                                            onResult("配置错误：请检查百度语音密钥")
+                                        } else {
+                                            Log.e(TAG, "识别错误码: $error, 描述: $desc")
+                                            // ⭐ 不要立即清空结果，保留已识别的内容
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "解析错误信息失败", e)
+                                    }
+                                    
+                                    isListening = false
+                                    // ⭐ 不在这里调用 onResult("")，让 handleFinalResult 处理
+                                }
+                                else -> {
+                                    Log.d(TAG, "其他事件: $name")
+                                }
                             }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed to parse error info", e)
                         }
-                        
-                        isListening = false
-                        onResult("")
-                    }
-                    else -> {
-                        Log.d(TAG, "其他事件: $name")
-                    }
+                    })
+                    Log.d(TAG, "✅ BaiduSpeechRecognizerHelper 初始化完成")
+                } else {
+                    Log.e(TAG, "❌ EventManager 创建失败，返回 null")
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ BaiduSpeechRecognizerHelper 初始化失败: ${e.message}", e)
             }
-        })
+        }
     }
     
     /**
@@ -108,6 +137,7 @@ class BaiduSpeechRecognizerHelper(
                 put(SpeechConstant.APP_KEY, apiKey)
                 put(SpeechConstant.SECRET, secretKey)
                 
+                // ⭐ 添加包名参数(用于鉴权)
                 put("package_name", context.packageName)
                 
                 // 识别参数
@@ -124,6 +154,11 @@ class BaiduSpeechRecognizerHelper(
                 put(SpeechConstant.NLU, "enable")
                 
                 put(SpeechConstant.VAD_ENDPOINT_TIMEOUT, 3000)
+                
+                // ⭐ 强制使用在线识别（禁用离线引擎）
+                put(SpeechConstant.DECODER, 2) // 2=纯在线识别
+                put("kws-file", "")            // 禁用离线唤醒词
+                put("lm-file", "")             // 禁用离线语言模型
             }
             
             Log.d(TAG, "Sending recognition request")
@@ -194,15 +229,24 @@ class BaiduSpeechRecognizerHelper(
             val json = JSONObject(params)
             val resultType = json.optString("result_type", "")
             
-            if (resultType == "partial_result") {
+            // ⭐ 支持多种 partial_result 格式
+            if (resultType == "partial_result" || resultType == "final_result") {
                 val bestResult = json.optString("best_result", "")
-                if (bestResult.isNotBlank()) {
-                    Log.d(TAG, "Partial result: '$bestResult'")
-                    onPartialResult?.invoke(bestResult)
+                val resultsArray = json.optJSONArray("results_recognition")
+                
+                // 尝试从不同字段获取结果
+                var text = bestResult
+                if (text.isBlank() && resultsArray != null && resultsArray.length() > 0) {
+                    text = resultsArray.optString(0, "")
+                }
+                
+                if (text.isNotBlank()) {
+                    Log.d(TAG, "🔄 实时识别结果: '$text'")
+                    onPartialResult?.invoke(text)
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse partial result", e)
+            Log.e(TAG, "解析部分结果失败", e)
         }
     }
     
@@ -211,8 +255,8 @@ class BaiduSpeechRecognizerHelper(
      */
     private fun handleFinalResult(params: String?) {
         if (params == null) {
-            Log.w(TAG, "Recognition result is empty (params is null)")
-            onResult("")
+            Log.w(TAG, "⚠️ 识别结果为空 (params is null)")
+            // ⭐ 不立即返回空字符串，等待用户手动停止
             return
         }
         
@@ -222,16 +266,29 @@ class BaiduSpeechRecognizerHelper(
             
             if (error == 0) {
                 val bestResult = json.optString("best_result", "")
-                Log.d(TAG, "Final recognition result: '$bestResult'")
-                onResult(bestResult)
+                val resultsArray = json.optJSONArray("results_recognition")
+                
+                // ⭐ 尝试从多个字段获取结果
+                var finalText = bestResult
+                if (finalText.isBlank() && resultsArray != null && resultsArray.length() > 0) {
+                    finalText = resultsArray.optString(0, "")
+                }
+                
+                Log.d(TAG, "✅ 最终识别结果: '$finalText'")
+                if (finalText.isNotBlank()) {
+                    onResult(finalText)
+                } else {
+                    Log.w(TAG, "⚠️ 识别结果为空字符串")
+                    // ⭐ 不调用 onResult，保持当前状态
+                }
             } else {
-                val errorMessage = json.optString("desc", "Unknown error")
-                Log.e(TAG, "Recognition failed: $errorMessage (error=$error)")
-                onResult("")
+                val errorMessage = json.optString("desc", "未知错误")
+                Log.e(TAG, "❌ 识别失败: $errorMessage (error=$error)")
+                // ⭐ 不自动调用 onResult("")，让用户看到已识别的内容
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse final result, raw content: $params", e)
-            onResult("")
+            Log.e(TAG, "❌ 解析最终结果失败，原始内容: $params", e)
+            // ⭐ 不自动调用 onResult("")
         }
     }
 }

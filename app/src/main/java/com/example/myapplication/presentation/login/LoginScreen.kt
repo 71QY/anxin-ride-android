@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
@@ -43,15 +44,42 @@ fun LoginScreen(
     val showCodeSuccessDialog by viewModel.showCodeSuccessDialog.collectAsState()
     val loginType by viewModel.loginType.collectAsState()
     val agreeTerms by viewModel.agreeTerms.collectAsState()
+    val needCompleteProfile by viewModel.needCompleteProfile.collectAsState()  // ⭐ 新增
 
-    Log.d("LoginScreen", "Current state: loginSuccess=$loginSuccess, currentStep=$currentStep")
+    Log.d("LoginScreen", "Current state: loginSuccess=$loginSuccess, showLoginDialog=$showLoginDialog, currentStep=$currentStep, needCompleteProfile=$needCompleteProfile")
+
+    // ⭐ 关键修复：使用 loginSuccess 作为 LaunchedEffect 的 key，确保状态变化时一定触发
+    var hasNavigated by rememberSaveable { mutableStateOf(false) }  // ⭐ 使用 rememberSaveable 防止 recomposition 丢失
+    
+    LaunchedEffect(loginSuccess, showLoginDialog) {
+        if (loginSuccess && showLoginDialog && !hasNavigated) {
+            Log.d("LoginScreen", "✅ 监听到 loginSuccess=true 且 showLoginDialog=true，开始处理登录流程")
+            hasNavigated = true  // ⭐ 防止 recomposition 重复触发
+            
+            kotlinx.coroutines.delay(1500)  // 给用户时间看到弹窗
+            Log.d("LoginScreen", "🚀 开始执行导航...")
+            
+            // ⭐ 关键：先执行导航回调
+            onRequestFloatPermission()
+            onLoginSuccess()
+            
+            Log.d("LoginScreen", "✅ 导航完成，关闭弹窗")
+            kotlinx.coroutines.delay(300)
+            viewModel.dismissLoginDialog()
+        }
+        // ⭐ 修复：移除 else if (!loginSuccess) 分支，避免状态重置时误触
+        // hasNavigated 只在应用重启或手动退出登录时由 resetAllState() 重置
+    }
 
     // 登录成功弹窗
     if (showLoginDialog) {
         AlertDialog(
-            onDismissRequest = viewModel::dismissLoginDialog,
-            title = { Text("登录成功") },
-            text = { Text("欢迎回来！") },
+            onDismissRequest = { 
+                // ⭐ 关键修复：禁用弹窗外部点击关闭，只能通过按钮关闭
+                // 防止用户在跳转完成前误触导致状态混乱
+            },
+            title = { Text("✅ 登录成功") },
+            text = { Text("欢迎回来！即将进入应用...") },
             confirmButton = {
                 Button(onClick = {
                     viewModel.dismissLoginDialog()
@@ -68,8 +96,8 @@ fun LoginScreen(
     if (showCodeSuccessDialog) {
         AlertDialog(
             onDismissRequest = viewModel::dismissCodeSuccessDialog,
-            title = { Text("验证码已发送") },
-            text = { Text("验证码已发送至您的手机，请注意查收。") },
+            title = { Text("✅ 验证码已发送") },
+            text = { Text("验证码已发送至您的手机，请注意查收。\n\n💡 提示：如未收到，请检查短信拦截或稍后重试。") },
             confirmButton = {
                 Button(onClick = viewModel::dismissCodeSuccessDialog) {
                     Text("确定")
@@ -91,7 +119,14 @@ fun LoginScreen(
                     )
                 },
                 navigationIcon = {
-            if (isRegisterMode || currentStep !is LoginViewModel.LoginStep.PhoneInput) {
+                    // ⭐ 修改：如果需要完善资料，在 RegisterInfo 步骤不显示返回按钮
+                    val shouldShowBackButton = when {
+                        needCompleteProfile && currentStep is LoginViewModel.LoginStep.RegisterInfo -> false
+                        isRegisterMode || currentStep !is LoginViewModel.LoginStep.PhoneInput -> true
+                        else -> false
+                    }
+                    
+                    if (shouldShowBackButton) {
                         IconButton(onClick = viewModel::goToPreviousStep) {
                             Icon(
                                 Icons.Default.ArrowBack,
@@ -133,21 +168,21 @@ fun LoginScreen(
                 color = MaterialTheme.colorScheme.primary
             )
 
-            Spacer(modifier = Modifier.weight(0.3f, fill = false))
+            Spacer(modifier = Modifier.height(24.dp))
 
             // 根据当前步骤显示不同内容
             when (currentStep) {
                 is LoginViewModel.LoginStep.PhoneInput -> {
                     // ========== 注册模式 UI ==========
                     if (isRegisterMode) {
-                        // 1. 手机号输入框 - ⭐ 使用自适应高度
+                        // ⭐ 修复：注册模式第一步只显示手机号和验证码
+                        
+                        // 1. 手机号输入框
                         OutlinedTextField(
                             value = phone,
                             onValueChange = viewModel::updatePhone,
                             label = { Text("手机号") },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 48.dp),  // ⭐ 使用 heightIn 确保最小高度
+                            modifier = Modifier.fillMaxWidth(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                             singleLine = true,
                             placeholder = { Text("请输入手机号") },
@@ -162,14 +197,12 @@ fun LoginScreen(
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // 2. 验证码输入框（带获取按钮）- ⭐ 自适应高度
+                        // 2. 验证码输入框（带获取按钮）
                         OutlinedTextField(
                             value = code,
                             onValueChange = viewModel::updateCode,
                             label = { Text("验证码") },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 48.dp),  // ⭐ 使用 heightIn
+                            modifier = Modifier.fillMaxWidth(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
                             placeholder = { Text("请输入验证码") },
@@ -177,55 +210,15 @@ fun LoginScreen(
                                 TextButton(
                                     onClick = viewModel::sendCode,
                                     enabled = !isCountingDown && !isLoading && phone.isNotBlank(),
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)  // ⭐ 减小内边距
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                                 ) {
                                     Text(
                                         text = if (isCountingDown) "${countdownSeconds}s" else "获取验证码",
                                         style = MaterialTheme.typography.bodySmall,
-                                        maxLines = 1  // ⭐ 防止换行
+                                        maxLines = 1
                                     )
                                 }
                             }
-                        )
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // 3. 设置密码输入框 - ⭐ 自适应高度
-                        OutlinedTextField(
-                            value = password,
-                            onValueChange = viewModel::updatePassword,
-                            label = { Text("设置密码") },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 48.dp),  // ⭐ 使用 heightIn
-                            visualTransformation = PasswordVisualTransformation(),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                            singleLine = true,
-                            placeholder = { Text("请设置密码") }
-                        )
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // 4. 确认密码输入框 - ⭐ 自适应高度
-                        OutlinedTextField(
-                            value = confirmPassword,
-                            onValueChange = viewModel::updateConfirmPassword,
-                            label = { Text("确认密码") },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 48.dp),  // ⭐ 使用 heightIn
-                            visualTransformation = PasswordVisualTransformation(),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                            singleLine = true,
-                            placeholder = { Text("请再次输入密码") }
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Text(
-                            text = "密码要求：至少 10 位，必须包含字母和特殊符号",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
                         Spacer(modifier = Modifier.height(24.dp))
@@ -240,34 +233,28 @@ fun LoginScreen(
                             Spacer(modifier = Modifier.height(8.dp))
                         }
 
-                        // 注册按钮
+                        // ⭐ 修改：注册模式第一步只需手机号即可点击，点击后发送验证码并跳转
                         Button(
                             onClick = viewModel::goToNextStep,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(48.dp),
-                            enabled = !isLoading &&
-                                    phone.isNotBlank() &&
-                                    code.isNotBlank() &&
-                                    password.isNotBlank() &&
-                                    confirmPassword.isNotBlank() &&
-                                    password == confirmPassword &&
-                                    agreeTerms,
+                            enabled = !isLoading && phone.isNotBlank() && agreeTerms,
                             shape = MaterialTheme.shapes.medium
                         ) {
                             Text(
-                                text = "注册",
+                                text = "下一步",
                                 style = MaterialTheme.typography.titleMedium
                             )
                         }
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // 已有账号？去登录 - ⭐ 减小间距
+                        // 已有账号？去登录
                         TextButton(
                             onClick = { viewModel.toggleMode() },
                             modifier = Modifier.fillMaxWidth(),
-                            contentPadding = PaddingValues(vertical = 4.dp)  // ⭐ 减小按钮内边距
+                            contentPadding = PaddingValues(vertical = 4.dp)
                         ) {
                             Text(
                                 text = "已有账号？去登录",
@@ -650,10 +637,26 @@ fun LoginScreen(
 
                 is LoginViewModel.LoginStep.RegisterInfo -> {
                     // 第三步：注册信息（仅注册模式）
+                    
+                    // ⭐ 新增：显示提示文字
+                    Text(
+                        text = "📝 完善账号信息",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    
+                    Text(
+                        text = "✅ 手机号验证通过！\n请设置昵称和密码完成注册",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+                    
                     OutlinedTextField(
                         value = nickname,
                         onValueChange = viewModel::updateNickname,
-                        label = { Text("昵称（可选）") },
+                        label = { Text("昵称*") },  // ⭐ 修改：必填
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         placeholder = { Text("请输入昵称") }
@@ -664,13 +667,24 @@ fun LoginScreen(
                     OutlinedTextField(
                         value = password,
                         onValueChange = viewModel::updatePassword,
-                        label = { Text("设置密码") },
+                        label = { Text("设置密码*") },  // ⭐ 修改：必填
                         modifier = Modifier.fillMaxWidth(),
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                         singleLine = true,
-                        placeholder = { Text("请设置密码") }
+                        placeholder = { Text("请设置密码") },
+                        isError = password.isNotBlank() && !viewModel.isValidPassword(password)  // ⭐ 新增：密码格式错误提示
                     )
+                    
+                    // ⭐ 新增：密码格式错误提示
+                    if (password.isNotBlank() && !viewModel.isValidPassword(password)) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "❌ 密码必须是 10 位，且包含字母和特殊符号",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
 
                     Spacer(modifier = Modifier.height(16.dp))
 
@@ -678,18 +692,29 @@ fun LoginScreen(
                     OutlinedTextField(
                         value = confirmPassword,
                         onValueChange = viewModel::updateConfirmPassword,
-                        label = { Text("确认密码") },
+                        label = { Text("确认密码*") },  // ⭐ 修改：必填
                         modifier = Modifier.fillMaxWidth(),
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                         singleLine = true,
-                        placeholder = { Text("请再次输入密码") }
+                        placeholder = { Text("请再次输入密码") },
+                        isError = confirmPassword.isNotBlank() && password != confirmPassword  // ⭐ 新增：密码不一致提示
                     )
+                    
+                    // ⭐ 新增：密码不一致提示
+                    if (confirmPassword.isNotBlank() && password != confirmPassword) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "❌ 两次输入的密码不一致",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = "密码要求：至少 10 位，必须包含字母和特殊符号",
+                        text = "密码要求：必须是 10 位，且包含字母和特殊符号",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -710,20 +735,26 @@ fun LoginScreen(
                     Button(
                         onClick = viewModel::goToNextStep,
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = !isLoading && password.isNotBlank() && confirmPassword.isNotBlank() && password == confirmPassword && agreeTerms
+                        enabled = !isLoading && 
+                                  nickname.isNotBlank() &&  // ⭐ 新增：昵称必填
+                                  password.isNotBlank() && 
+                                  confirmPassword.isNotBlank() && 
+                                  password == confirmPassword &&
+                                  viewModel.isValidPassword(password) &&  // ⭐ 新增：密码格式验证
+                                  agreeTerms
                     ) {
-                        Text("注册")
+                        Text("完成注册")
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // 返回按钮
-                    OutlinedButton(
-                        onClick = viewModel::goToPreviousStep,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("返回")
-                    }
+                    // ⭐ 修改：移除返回按钮，强制要求完善资料
+                    // OutlinedButton(
+                    //     onClick = viewModel::goToPreviousStep,
+                    //     modifier = Modifier.fillMaxWidth()
+                    // ) {
+                    //     Text("返回")
+                    // }
                 }
 
             }

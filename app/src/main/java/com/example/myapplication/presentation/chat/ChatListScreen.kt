@@ -1,5 +1,6 @@
 package com.example.myapplication.presentation.chat
 
+import android.util.Log  // ⭐ 新增：用于日志输出
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -27,7 +28,10 @@ fun ChatListScreen(
     viewModel: ChatListViewModel = hiltViewModel(),
     onBackClick: () -> Unit,
     onSessionSelected: (String) -> Unit = {},
-    onNavigateToAgent: () -> Unit = {}  // ⭐ 新增：跳转到智能体聊天
+    onNavigateToAgent: () -> Unit = {},  // ⭐ 新增：跳转到智能体聊天
+    guardianList: List<com.example.myapplication.data.model.GuardianInfo> = emptyList(),  // ⭐ 长辈端：亲友列表
+    elderList: List<com.example.myapplication.data.model.ElderInfo> = emptyList(),  // ⭐ 普通端：长辈列表
+    showBackButton: Boolean = true  // ⭐ 新增：是否显示返回键（普通用户不显示）
 ) {
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
     val selectedSessionId by viewModel.selectedSessionId.collectAsStateWithLifecycle()
@@ -47,8 +51,10 @@ fun ChatListScreen(
                 TopAppBar(
                     title = { Text("消息") },
                     navigationIcon = {
-                        IconButton(onClick = onBackClick) {
-                            Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                        if (showBackButton) {  // ⭐ 根据参数决定是否显示返回键
+                            IconButton(onClick = onBackClick) {
+                                Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                            }
                         }
                     }
                 )
@@ -59,13 +65,65 @@ fun ChatListScreen(
                     .fillMaxSize()
                     .padding(paddingValues)
             ) {
-                // ⭐ 新增：智能体助手入口
+                // ⭐ 智能体助手入口（固定显示在最上方）
                 item {
                     AgentChatEntry(
                         onClick = onNavigateToAgent
                     )
                 }
                 
+                // ⭐ 新增：普通端 - 我的长辈列表
+                if (elderList.isNotEmpty()) {
+                    item {
+                        Text(
+                            text = "我的长辈",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
+                    
+                    items(elderList) { elder ->
+                        ElderChatItem(
+                            elder = elder,
+                            onClick = {
+                                // ⭐ 点击长辈后进入与该长辈的聊天界面
+                                onSessionSelected("elder_${elder.userId}")
+                            }
+                        )
+                    }
+                }
+                
+                // ⭐ 长辈端 - 我的亲友列表
+                if (guardianList.isNotEmpty()) {
+                    item {
+                        Text(
+                            text = "我的亲友",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
+                }
+                
+                // ⭐ 新增：显示亲友列表（先过滤无效数据）
+                val validGuardians = guardianList.filter { 
+                    it.userId != 0L && !it.name.isNullOrBlank() 
+                }
+                
+                items(validGuardians) { guardian ->
+                    GuardianChatItem(
+                        guardian = guardian,
+                        onClick = {
+                            // ⭐ 点击亲友后进入与该亲友的聊天界面
+                            onSessionSelected("guardian_${guardian.userId}")
+                        }
+                    )
+                }
+                
+                // 原有的会话列表（暂时为空，保留以便后续扩展）
                 items(sessions) { session ->
                     ChatSessionItem(
                         session = session,
@@ -130,6 +188,121 @@ fun AgentChatEntry(
                     text = "在线",
                     fontSize = 14.sp,
                     color = Color.Green
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun GuardianChatItem(
+    guardian: com.example.myapplication.data.model.GuardianInfo,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // 头像
+            Box(
+                modifier = Modifier
+                    .size(50.dp)
+                    .clip(CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "👤",
+                    fontSize = 24.sp
+                )
+            }
+            
+            Spacer(modifier = Modifier.width(12.dp))
+            
+            // 信息
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = guardian.name ?: "未知亲友",  // ⭐ 防御性处理
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                
+                Spacer(modifier = Modifier.height(4.dp))
+                
+                Text(
+                    text = guardian.phone ?: "暂无联系方式",  // ⭐ 显示手机号
+                    fontSize = 14.sp,
+                    color = Color.Gray
+                )
+            }
+        }
+    }
+}
+
+// ⭐ 新增：长辈聊天项（普通端显示）
+@Composable
+fun ElderChatItem(
+    elder: com.example.myapplication.data.model.ElderInfo,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // 头像
+            Box(
+                modifier = Modifier
+                    .size(50.dp)
+                    .clip(CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "👴",
+                    fontSize = 24.sp
+                )
+            }
+            
+            Spacer(modifier = Modifier.width(12.dp))
+            
+            // 信息
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = elder.name ?: "未知长辈",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                
+                Spacer(modifier = Modifier.height(4.dp))
+                
+                Text(
+                    text = elder.phone ?: "暂无联系方式",
+                    fontSize = 14.sp,
+                    color = Color.Gray
                 )
             }
         }
@@ -267,7 +440,9 @@ fun ChatDetailContent(
                 onValueChange = { inputText = it },
                 modifier = Modifier.weight(1f),
                 placeholder = { Text("输入消息...") },
-                singleLine = true
+                singleLine = true,
+                enabled = true,  // ⭐ 明确启用输入框
+                readOnly = false  // ⭐ 明确设置为可编辑
             )
             
             Spacer(modifier = Modifier.width(8.dp))

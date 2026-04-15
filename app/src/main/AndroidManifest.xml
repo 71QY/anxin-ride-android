@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- ⭐ 新增：后台定位服务需要的权限 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
@@ -13,6 +15,9 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    
+    <!-- ⭐ 新增：拨打电话权限 -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
 
     <!-- ⭐ 新增：相册访问权限 -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
@@ -42,6 +47,13 @@
                 android:value="悬浮窗AI助手" />
         </service>
 
+        <!-- ⭐ 新增：后台定位追踪服务 -->
+        <service
+            android:name=".service.LocationTrackingService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
         <meta-data
             android:name="com.amap.api.v2.apikey"
             android:value="${AMAP_KEY}" />
@@ -50,7 +62,8 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
-            android:theme="@style/Theme.AnxinChuxing">
+            android:theme="@style/Theme.AnxinChuxing"
+            android:windowSoftInputMode="adjustResize">  <!-- ⭐ 新增：键盘弹出时调整布局 -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

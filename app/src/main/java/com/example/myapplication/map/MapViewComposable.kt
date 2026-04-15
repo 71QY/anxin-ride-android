@@ -33,7 +33,6 @@ fun MapViewComposable(
                     mapView.onCreate(Bundle())
                     Log.d("MapViewComposable", "MapView onCreate")
                 }
-                // ⭐ 修改：移除 onStart 和 onStop，MapView 不需要这些方法
                 Lifecycle.Event.ON_RESUME -> {
                     mapView.onResume()
                     Log.d("MapViewComposable", "MapView onResume")
@@ -63,12 +62,24 @@ fun MapViewComposable(
         modifier = modifier,
         update = { view ->
             if (aMap == null) {
+                Log.d("MapViewComposable", "⏳ 尝试获取 AMap 实例...")
                 aMap = view.map
-                aMap?.let { map ->
-                    onMapReady(map)
-                    map.setOnMapClickListener { onMapClick(it) }
-                    map.setOnPOIClickListener { poi -> onPoiClick(poi) }
-                    Log.d("MapViewComposable", "地图加载完成")
+                
+                if (aMap != null) {
+                    Log.d("MapViewComposable", "✅ AMap 实例获取成功")
+                    Log.d("MapViewComposable", "🔥🔥🔥 即将调用 onMapReady 回调 🔥🔥🔥")
+                    Log.d("MapViewComposable", "🔥 onMapReady 参数是否为 null: ${onMapReady == null}")
+                    try {
+                        onMapReady(aMap!!)
+                        Log.d("MapViewComposable", "🔥🔥🔥 onMapReady 回调已调用完成 🔥🔥🔥")
+                    } catch (e: Exception) {
+                        Log.e("MapViewComposable", "❌ onMapReady 回调执行失败", e)
+                        e.printStackTrace()
+                    }
+                    aMap!!.setOnMapClickListener { onMapClick(it) }
+                    aMap!!.setOnPOIClickListener { poi -> onPoiClick(poi) }
+                } else {
+                    Log.w("MapViewComposable", "⚠️ AMap 实例为 null，等待下次 update")
                 }
             }
         }

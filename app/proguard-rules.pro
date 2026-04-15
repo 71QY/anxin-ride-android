@@ -70,14 +70,21 @@
     <fields>;
 }
 
-# ⭐ 高德地图 SDK (新增)
+# ⭐ 高德地图 SDK (完整保留规则)
 -keep class com.amap.api.** { *; }
+-keep class com.autonavi.** { *; }
+-keep class com.amap.location.** { *; }
+-keep class com.amap.ams.** { *; }
 -dontwarn com.amap.api.**
--keep class com.amap.api.services.** { *; }
--keep class com.amap.api.maps.** { *; }
--keep class com.amap.api.location.** { *; }
+-dontwarn com.autonavi.**
+-dontwarn com.amap.location.**
+-dontwarn net.jafama.**
 -keepattributes *Annotation*
 -keep class com.amap.api.** {
+    <methods>;
+    <fields>;
+}
+-keep class com.autonavi.** {
     <methods>;
     <fields>;
 }
@@ -89,3 +96,12 @@
 # ⭐ Compose
 -keep class androidx.compose.** { *; }
 -keep class androidx.navigation.** { *; }
+
+# ⭐ 保留日志输出(Release 模式也需要查看日志)
+-keepclassmembers class android.util.Log {
+    public static *** d(...);
+    public static *** i(...);
+    public static *** w(...);
+    public static *** e(...);
+    public static *** v(...);
+}
