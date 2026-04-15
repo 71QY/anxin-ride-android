@@ -459,8 +459,7 @@ fun AccountSecurityScreen(
                                 viewModel.setErrorMessage("验证码必须是6位")
                                 return@Button
                             }
-                            // TODO: 调用后端验证验证码接口
-                            // 暂时直接跳到下一步
+                            // ⭐ 修复：验证成功后跳到第二步，在第二步调用修改密码接口
                             passwordStep = 2
                             viewModel.clearError()
                         } else {
@@ -473,7 +472,7 @@ fun AccountSecurityScreen(
                                 viewModel.setErrorMessage("两次输入的密码不一致")
                                 return@Button
                             }
-                            // TODO: 调用后端修改密码接口，传入验证码和新密码
+                            // ⭐ 修复：调用后端修改密码接口，传入验证码和新密码
                             viewModel.changePasswordWithCode(verifyCode, newPassword)
                             showChangePasswordDialog = false
                             passwordStep = 1

@@ -58,7 +58,7 @@ class LocationTrackingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        Log.d(TAG, "✅ 后台定位服务创建")
+        Log.d(TAG, "✅✅✅ 后台定位服务创建 - 进程ID: ${android.os.Process.myPid()}")
         
         // 启动前台服务
         startForegroundService()
@@ -68,6 +68,8 @@ class LocationTrackingService : Service() {
         
         // 启动定位
         startLocationUpdates()
+        
+        Log.d(TAG, "✅✅✅ 后台定位服务初始化完成")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -87,7 +89,7 @@ class LocationTrackingService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        Log.d(TAG, "❌ 后台定位服务销毁")
+        Log.d(TAG, "❌❌❌ 后台定位服务销毁 - 进程ID: ${android.os.Process.myPid()}")
         
         // 停止定位
         stopLocationUpdates()

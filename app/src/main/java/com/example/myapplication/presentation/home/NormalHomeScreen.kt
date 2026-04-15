@@ -142,26 +142,9 @@ fun NormalHomeScreen(
     
     // ========== 副作用处理 ==========
     
-    // 1. 自动登录失败检测 - ⭐ 修复：延长到15秒，给Profile加载留足够时间
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(15000) // ⭐ 给15秒加载时间（原8秒可能不够）
-        
-        val currentUserId = userId
-        val currentProfileLoaded = isProfileLoaded
-        
-        Log.d("NormalHomeScreen", "🔍 自动登录检测: userId=$currentUserId, profileLoaded=$currentProfileLoaded")
-        
-        // ⭐ 修复：只有当userId存在但profile始终未加载时，才认为是Token失效
-        if (currentUserId != null && !currentProfileLoaded) {
-            Log.w("NormalHomeScreen", "⚠️ 普通模式 - 用户信息加载失败，Token可能已过期，触发退出登录")
-            onLogout()
-        } else if (currentUserId == null) {
-            Log.e("NormalHomeScreen", "❌ 普通模式 - UserId为空，说明Token已丢失，触发退出登录")
-            onLogout()
-        } else {
-            Log.d("NormalHomeScreen", "✅ 普通模式 - 自动登录成功，userId=$currentUserId")
-        }
-    }
+    // 1. ⭐ 修复：移除自动登录失败检测，由 MainActivity 统一处理
+    // 原因：HomeViewModel 的 userId 是异步获取的，这里的同步检查会导致误判
+    // 如果 Token 真的失效，AuthInterceptor 会自动清除，下次启动时会跳转到登录页
     
     // 2. 地图提示自动消失
     LaunchedEffect(Unit) {
@@ -236,10 +219,9 @@ fun NormalHomeScreen(
                 if (hasHandledOrderSuccess) return@LaunchedEffect
                 
                 val order = currentState.order
-                Log.d("NormalHomeScreen", "✅ 订单创建成功: ${order.id}, 准备跳转到行程追踪页")
+                Log.d("NormalHomeScreen", "✅ 订单创建成功: ${order.id}")
                 hasHandledOrderSuccess = true
-                // ⭐ 修复：跳转到行程追踪页（而非订单详情页）
-                onNavigateToOrderTracking(order.id)
+                // ⭐ 修复：不再在这里跳转，由 NavigateToOrderTracking 事件统一处理
                 viewModel.resetOrderState()
             }
             is HomeViewModel.OrderState.Error -> {
@@ -293,7 +275,9 @@ fun NormalHomeScreen(
     
     // ========== UI渲染 ==========
     Box(
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier
+            .fillMaxSize()
+            .imePadding()  // ⭐ 关键修复：确保键盘弹出时输入框可见
     ) {
         // 1. 地图区域 - ⭐ 优化：地图占据全屏
         MapViewComposable(
@@ -754,6 +738,10 @@ fun NormalHomeScreen(
                         if (detail.distance != null) {
                             Text(text = "距离：${detail.formattedDistance ?: String.format("%.1f 公里", detail.distance / 1000)}", style = MaterialTheme.typography.bodyMedium)
                         }
+                        if (detail.duration != null) {
+                            val minutes = detail.duration / 60
+                            Text(text = "预计时长：${minutes} 分钟", style = MaterialTheme.typography.bodyMedium)
+                        }
                         if (detail.price != null) {
                             Text(text = "预估车费：¥${detail.price}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
                         }
@@ -761,6 +749,7 @@ fun NormalHomeScreen(
                 },
                 confirmButton = {
                     Button(onClick = {
+                        viewModel.dismissPoiDetailDialog()  // ⭐ 关键修复：先关闭 POI 详情弹窗
                         showOrderTypeDialog = true
                     }, enabled = detail.canOrder) {
                         Text("确认目的地")

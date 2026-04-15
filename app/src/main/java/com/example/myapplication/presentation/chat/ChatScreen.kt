@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable  // ⭐ 新增
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -80,7 +81,8 @@ fun PopupMenuButton(
 fun ChatScreen(
     viewModel: ChatViewModel = hiltViewModel(),
     onNavigateToOrder: (Long) -> Unit,
-    chatMode: ChatMode = ChatMode.AGENT  // ⭐ 新增：聊天模式参数
+    chatMode: ChatMode = ChatMode.AGENT,  // ⭐ 新增：聊天模式参数
+    isElderMode: Boolean = false  // ⭐ 新增：长辈模式标识
 ) {
     val context = LocalContext.current
 
@@ -91,10 +93,19 @@ fun ChatScreen(
     val orderState by viewModel.orderState.collectAsStateWithLifecycle()
     val isListening by viewModel.isListening.collectAsStateWithLifecycle()  // ⭐ 新增：监听语音输入状态
     val voiceInputText by viewModel.voiceInputText.collectAsStateWithLifecycle()  // ⭐ 新增：监听实时语音文本
+    val pendingImages = viewModel.pendingImages  // ⭐ 新增：待发送图片列表（直接访问，不使用 by）
+    val showImageLimitDialog by remember { derivedStateOf { viewModel.showImageLimitDialog } }  // ⭐ 新增：图片数量限制对话框
+    val isElderModeState by viewModel.isElderMode.collectAsStateWithLifecycle()  // ⭐ 新增：收集长辈模式状态
+    
+    // ⭐ 使用传入的参数或 ViewModel 中的状态（优先使用传入的参数）
+    val effectiveElderMode = if (chatMode == ChatMode.AGENT) isElderMode else false
     var inputText by remember { mutableStateOf("") }
     
     // ⭐ 新增：用于自动滚动到最新消息
     val lazyListState = rememberLazyListState()
+    
+    // ⭐ 新增：是否已发送欢迎教程
+    var hasSentWelcomeTutorial by rememberSaveable { mutableStateOf(false) }
 
     var showImagePickerDialog by remember { mutableStateOf(false) }
     
@@ -124,7 +135,8 @@ fun ChatScreen(
         contract = ActivityResultContracts.TakePicturePreview()
     ) { bitmap ->
         bitmap?.let {
-            viewModel.sendImage(it)
+            // ⭐ 修改：直接传入 Bitmap，在 ViewModel 中异步压缩
+            viewModel.addPendingImageFromBitmap(it)
         }
     }
 
@@ -139,6 +151,42 @@ fun ChatScreen(
     LaunchedEffect(Unit) {
         if (!audioPermissionState.status.isGranted) {
             audioPermissionState.launchPermissionRequest()
+        }
+        
+        // ⭐ 新增：进入时发送使用教程（仅首次）
+        if (!hasSentWelcomeTutorial && chatMode == ChatMode.AGENT) {
+            hasSentWelcomeTutorial = true
+            val tutorialMessage = if (effectiveElderMode) {
+                "👴 长辈端使用指南：\n" +
+                "\n" +
+                "✅ 您可以：\n" +
+                "• 语音输入：点击🎤按钮说话\n" +
+                "• 图片识别：点击📷上传照片\n" +
+                "• 文字聊天：直接输入问题\n" +
+                "\n" +
+                "❌ 温馨提示：\n" +
+                "• 长辈端暂不支持下单叫车功能\n" +
+                "• 如需叫车，请联系您的亲友代劳\n" +
+                "\n" +
+                "💡 试试说：'附近的医院在哪里'"
+            } else {
+                "🤖 智能体助手使用指南：\n" +
+                "\n" +
+                "✅ 功能说明：\n" +
+                "• 🎤 语音输入 - 按住说话，自动识别\n" +
+                "• 📷 图片识别 - 上传照片，AI 帮您分析\n" +
+                "• 💬 智能对话 - 问路、查路线、找地点\n" +
+                "• 🚗 一键叫车 - 点击建议按钮快速下单\n" +
+                "\n" +
+                "💡 试试说：\n" +
+                "• '我要去北京站'\n" +
+                "• '附近的餐厅有哪些'\n" +
+                "• '怎么去机场'"
+            }
+            
+            // 延迟发送，确保 WebSocket 连接成功
+            kotlinx.coroutines.delay(1000)
+            viewModel.addSystemMessage(tutorialMessage)
         }
     }
     
@@ -336,9 +384,19 @@ fun ChatScreen(
             }
         )
     }
+    
+    // ⭐ 新增：图片数量限制对话框
+    if (showImageLimitDialog) {
+        ImageLimitDialog(
+            maxCount = 3,
+            onDismiss = { viewModel.dismissImageLimitDialog() }
+        )
+    }
 
     Column(
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier
+            .fillMaxSize()
+            .imePadding()  // ⭐ 关键修复：确保键盘弹出时输入框可见
     ) {
         // ⭐ 顶部栏 - 使用更紧凑的布局
         Box(
@@ -416,7 +474,8 @@ fun ChatScreen(
                     onImageClick = { imageBase64 ->  // ⭐ 新增：图片点击回调
                         selectedImageBase64 = imageBase64
                         showImageDialog = true
-                    }
+                    },
+                    isElderMode = effectiveElderMode  // ⭐ 新增：传递长辈模式标识
                 )
             }
         }
@@ -427,6 +486,29 @@ fun ChatScreen(
                 .fillMaxWidth()
                 .padding(8.dp)
         ) {
+            // ⭐ 新增：图片预览栏（在输入框上方）
+            if (pendingImages.isNotEmpty()) {
+                ImagePreviewBar(
+                    pendingImages = pendingImages,
+                    onRemoveImage = { index -> viewModel.removePendingImage(index) }
+                )
+                
+                // ⭐ 发送按钮（当有待发送图片时显示）
+                Button(
+                    onClick = {
+                        viewModel.sendAllPendingImages()
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    enabled = pendingImages.isNotEmpty()
+                ) {
+                    Icon(Icons.Default.Send, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("发送 ${pendingImages.size}/3 张图片")  // ⭐ 修改：显示当前数量/上限
+                }
+            }
+            
             // ⭐ 新增：语音输入状态提示
             androidx.compose.animation.AnimatedVisibility(
                 visible = isListening,
@@ -474,16 +556,25 @@ fun ChatScreen(
                     onValueChange = { inputText = it },
                     modifier = Modifier.weight(1f),
                     placeholder = { Text("输入消息...") },
-                    // ⭐ 优化：单行显示，自动滚动
-                    singleLine = true,
-                    maxLines = 1
+                    // ⭐ 优化：多行显示，最多3行，自动滚动
+                    singleLine = false,
+                    maxLines = 3,
+                    minLines = 1
                 )
 
                 IconButton(
                     onClick = {
                         if (inputText.isNotBlank()) {
-                            viewModel.sendMessage(inputText)
-                            inputText = ""  // ⭐ 发送后清空
+                            // ⭐ 修复：如果有图片，先发送图片（带文字），否则只发送文字
+                            if (pendingImages.isNotEmpty()) {
+                                // 图文混发：将文字作为图片的说明一起发送
+                                viewModel.sendAllPendingImagesWithText(inputText)
+                                inputText = ""  // 发送后清空
+                            } else {
+                                // 纯文字发送
+                                viewModel.sendMessage(inputText)
+                                inputText = ""  // 发送后清空
+                            }
                         }
                     },
                     enabled = inputText.isNotBlank()
@@ -524,7 +615,8 @@ fun ChatBubble(
     message: ChatMessage,
     poiList: List<PoiData>,  // ⭐ 新增：传入 POI 列表
     onCreateOrder: (String, Double, Double) -> Unit,  // ⭐ 修改：接受经纬度和地址
-    onImageClick: (String) -> Unit  // ⭐ 新增：图片点击回调
+    onImageClick: (String) -> Unit,  // ⭐ 新增：图片点击回调
+    isElderMode: Boolean = false  // ⭐ 新增：长辈模式标识
 ) {
     Column(
         modifier = Modifier
@@ -562,48 +654,64 @@ fun ChatBubble(
                     style = MaterialTheme.typography.bodyLarge
                 )
                 
-                // ⭐ 如果有图片，显示图片
-                if (!message.imageBase64.isNullOrBlank()) {
+                // ⭐ 如果有图片，显示图片（支持多张，竖向排列）
+                val allImages = buildList {
+                    if (!message.imageBase64.isNullOrBlank()) {
+                        add(message.imageBase64)
+                    }
+                    if (!message.additionalImages.isNullOrEmpty()) {
+                        addAll(message.additionalImages)
+                    }
+                }
+                
+                if (allImages.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(8.dp))
                     
-                    // ⭐ 解码并显示 Base64 图片
-                    val bitmap = remember(message.imageBase64) {
-                        try {
-                            // 移除 data:image/jpeg;base64, 前缀（如果存在）
-                            val base64Data = if (message.imageBase64.contains(",")) {
-                                message.imageBase64.substringAfter(",")
-                            } else {
-                                message.imageBase64
+                    // ⭐ 竖向排列所有图片
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        allImages.forEachIndexed { index, imageBase64 ->
+                            // ⭐ 解码并显示 Base64 图片
+                            val bitmap = remember(imageBase64) {
+                                try {
+                                    // 移除 data:image/jpeg;base64, 前缀（如果存在）
+                                    val base64Data = if (imageBase64.contains(",")) {
+                                        imageBase64.substringAfter(",")
+                                    } else {
+                                        imageBase64
+                                    }
+                                    
+                                    val imageBytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
+                                    android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+                                } catch (e: Exception) {
+                                    Log.e("ChatScreen", "❌ 图片解码失败: ${e.message}")
+                                    null
+                                }
                             }
                             
-                            val imageBytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
-                            android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
-                        } catch (e: Exception) {
-                            Log.e("ChatScreen", "❌ 图片解码失败: ${e.message}")
-                            null
+                            if (bitmap != null) {
+                                // ⭐ 添加点击事件，支持查看大图
+                                Image(
+                                    bitmap = bitmap.asImageBitmap(),
+                                    contentDescription = "发送的图片 ${index + 1}/${allImages.size}（点击查看大图）",
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 300.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            onImageClick(imageBase64)  // ⭐ 使用回调函数
+                                        },
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else {
+                                Text(
+                                    text = "⚠️ 图片 ${index + 1} 加载失败",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.Red
+                                )
+                            }
                         }
-                    }
-                    
-                    if (bitmap != null) {
-                        // ⭐ 添加点击事件，支持查看大图
-                        Image(
-                            bitmap = bitmap.asImageBitmap(),
-                            contentDescription = "发送的图片（点击查看大图）",
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 300.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable {
-                                    onImageClick(message.imageBase64!!)  // ⭐ 使用回调函数
-                                },
-                            contentScale = ContentScale.Crop
-                        )
-                    } else {
-                        Text(
-                            text = "⚠️ 图片加载失败",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.Red
-                        )
                     }
                 }
             }
@@ -628,26 +736,29 @@ fun ChatBubble(
                 horizontalArrangement = Arrangement.Start
             ) {
                 message.suggestions.forEach { suggestion ->
-                    // ⭐ 查找对应的 POI 坐标
-                    val poi = poiList.find { it.name == suggestion }
-                    OutlinedButton(
-                        onClick = { 
-                            if (poi != null) {
-                                onCreateOrder(poi.name, poi.lat, poi.lng)
-                            } else {
-                                // 如果找不到 POI，使用默认坐标（北京）
-                                onCreateOrder(suggestion, 39.9042, 116.4074)
-                            }
-                        },
-                        modifier = Modifier.padding(end = 4.dp, top = 4.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MaterialTheme.colorScheme.primary
-                        )
-                    ) {
-                        Text(
-                            text = suggestion,
-                            maxLines = 1
-                        )
+                    // ⭐ 长辈模式：不显示下单建议按钮
+                    if (!isElderMode) {
+                        // ⭐ 查找对应的 POI 坐标
+                        val poi = poiList.find { it.name == suggestion }
+                        OutlinedButton(
+                            onClick = { 
+                                if (poi != null) {
+                                    onCreateOrder(poi.name, poi.lat, poi.lng)
+                                } else {
+                                    // 如果找不到 POI，使用默认坐标（北京）
+                                    onCreateOrder(suggestion, 39.9042, 116.4074)
+                                }
+                            },
+                            modifier = Modifier.padding(end = 4.dp, top = 4.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            Text(
+                                text = suggestion,
+                                maxLines = 1
+                            )
+                        }
                     }
                 }
             }

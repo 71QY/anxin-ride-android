@@ -1,10 +1,15 @@
+@file:Suppress("DEPRECATION", "NewApi", "UNRESOLVED_REFERENCE")
+
     package com.example.myapplication.presentation.home
     
+    import android.app.PendingIntent
     import android.content.Context
     import android.content.Intent
     import android.os.Build
     import android.util.LruCache
     import android.util.Log
+    import androidx.core.app.NotificationCompat
+    // import com.example.myapplication.R  // ⭐ R类会在编译后自动生成
     import androidx.compose.runtime.getValue
     import androidx.compose.runtime.mutableStateOf
     import androidx.compose.runtime.setValue
@@ -159,6 +164,10 @@
         private val _isProfileLoaded = MutableStateFlow(false)
         val isProfileLoaded: StateFlow<Boolean> = _isProfileLoaded.asStateFlow()
         
+        // ⭐ 新增：缓存用户信息（用于代叫车时获取真实姓名）
+        private val _userNickname = MutableStateFlow<String?>(null)
+        val userNickname: StateFlow<String?> = _userNickname.asStateFlow()
+        
         // ⭐ 新增：亲友列表（长辈模式）
         private val _guardianInfoList = MutableStateFlow<List<GuardianInfo>>(emptyList())
         val guardianInfoList: StateFlow<List<GuardianInfo>> = _guardianInfoList.asStateFlow()
@@ -169,6 +178,9 @@
         
         // ⭐ 新增：长辈列表加载标志（用于缓存）
         private var _elderListLoaded = false
+        
+        // ⭐ 新增：WebSocket 消息监听标志（避免重复创建协程）
+        private var _wsMessageListenerStarted = false
         
         // ⭐ 高优先级2：代叫车请求通知（用于长辈端）
         data class ProxyOrderRequest(
@@ -198,6 +210,11 @@
             return (latLng.latitude * 10_000).toLong() * 10_000 + (latLng.longitude * 10_000).toLong()
         }
         
+        // ⭐ 新增：同步获取 userId（用于自动登录判断）
+        fun getUserIdSync(): Long? {
+            return tokenManager.getUserId()
+        }
+        
         init {
             // ⭐ 新增：获取 userId（在协程中调用 suspend 函数）
             viewModelScope.launch {
@@ -216,15 +233,14 @@
             
             // ⭐ 关键修复：监听全局代叫车请求事件
             viewModelScope.launch {
-                Log.d("HomeViewModel", "🔍 开始监听全局代叫车请求事件...")
                 MyApplication.proxyOrderRequestEvent.collect { event ->
                     Log.d("HomeViewModel", "📩 收到全局代叫车请求事件：orderId=${event.orderId}, from=${event.requesterName}, to=${event.destination}")
+                    
                     onProxyOrderRequestReceived(
                         orderId = event.orderId,
                         requesterName = event.requesterName,
                         destination = event.destination
                     )
-                    Log.d("HomeViewModel", "✅ 已调用 onProxyOrderRequestReceived")
                 }
             }
         }
@@ -703,6 +719,11 @@
         // ⭐ 保留一个 dismissPoiDetailDialog 方法即可
         fun dismissPoiDetailDialog() {
             _showPoiDetailDialog.value = false
+            // ⭐ 关键修复：关闭弹窗时，将 poiDetail 保存到 selectedPoiForMap，供后续代叫车使用
+            _poiDetail.value?.let { detail ->
+                Log.d("HomeViewModel", "💾 保存 POI 详情到 selectedPoiForMap：name=${detail.name}, lat=${detail.lat}, lng=${detail.lng}")
+                _selectedPoiForMap.value = detail
+            }
             _poiDetail.value = null
         }
         
@@ -1082,6 +1103,13 @@
                                     finalDestName = selectedPoi.name ?: destName
                                     Log.d("HomeViewModel", "✅ 使用选中 POI (后端) 的坐标和名称：lat=$destLat, lng=$destLng, name=$finalDestName")
                                 }
+                                // ⭐ 新增：处理 PoiDetail 类型（代叫车场景）
+                                is com.example.myapplication.data.model.PoiDetail -> {
+                                    destLat = selectedPoi.lat
+                                    destLng = selectedPoi.lng
+                                    finalDestName = selectedPoi.name
+                                    Log.d("HomeViewModel", "✅ 使用选中 POI Detail 的坐标和名称：lat=$destLat, lng=$destLng, name=$finalDestName")
+                                }
                                 else -> {
                                     Log.e("HomeViewModel", "❌ 未知的 POI 类型：${selectedPoi::class.java}")
                                     _orderState.value = OrderState.Error("无法识别的 POI 类型")
@@ -1139,8 +1167,12 @@
                             // ⭐ 触发事件，通知 UI 跳转
                             _events.send(HomeEvent.OrderCreated(order))
                             
-                            // ⭐ 新增：发送跳转到行程追踪页面的事件
-                            _events.send(HomeEvent.NavigateToOrderTracking(order.id))
+                            // ⭐ 修复：延迟发送导航事件，确保 orderState 已被 UI 层收集
+                            viewModelScope.launch {
+                                kotlinx.coroutines.delay(100)  // 延迟 100ms
+                                _events.send(HomeEvent.NavigateToOrderTracking(order.id))
+                                Log.d("HomeViewModel", "🚀 已发送导航事件: orderId=${order.id}")
+                            }
                             
                             // ⭐ 新增：广播订单创建成功事件（用于刷新个人中心订单列表）
                             Log.d("HomeViewModel", "📢 广播订单创建成功事件，刷新订单列表")
@@ -1272,8 +1304,9 @@
          */
         fun checkElderMode(onAuthFailure: (() -> Unit)? = null) {
             // ⭐ 关键修复：在协程外部立即设置标记，防止并发调用
+            Log.d("HomeViewModel", "🔍 [checkElderMode入口] isCheckingElderMode=$isCheckingElderMode")
             if (isCheckingElderMode) {
-                Log.d("HomeViewModel", "⚠️ checkElderMode 正在执行中，跳过重复调用")
+                Log.w("HomeViewModel", "⚠️ checkElderMode 正在执行中，跳过重复调用")
                 return
             }
             
@@ -1281,7 +1314,9 @@
             isCheckingElderMode = true
             Log.d("HomeViewModel", "🔒 已设置 isCheckingElderMode = true")
             
+            Log.d("HomeViewModel", "🚀 [checkElderMode] 即将启动 viewModelScope.launch...")
             viewModelScope.launch {
+                Log.d("HomeViewModel", "✅ [checkElderMode] viewModelScope.launch 已启动")
                 try {
                     Log.d("HomeViewModel", "🔍 === 开始检查长辈模式（自动登录验证）===")
                     Log.d("HomeViewModel", "📱 当前 userId: ${tokenManager.getUserId()}")
@@ -1357,13 +1392,16 @@
                         Log.d("HomeViewModel", "👴 长辈模式：启动独立定位和加载亲友列表")
                         startIndependentLocation()
                         loadGuardianInfo()
-                        // ⭐ 启动后台定位追踪服务（确保持续获取位置）
-                        startBackgroundTracking()
                     } else {
                         // 普通模式：加载长辈列表（用于帮长辈叫车）
                         Log.d("HomeViewModel", "👤 普通模式：加载长辈列表")
                         loadElderList(forceRefresh = false)
                     }
+                    
+                    // ⭐ 关键修复：无论长辈还是普通用户，都启动后台定位追踪服务
+                    // 确保应用在后台时也能持续获取位置，维持WebSocket连接
+                    Log.d("HomeViewModel", "🚀 启动后台定位追踪服务（双端都需要）")
+                    startBackgroundTracking()
                 } catch (e: Exception) {
                     Log.e("HomeViewModel", "❌ 检查长辈模式异常", e)
                     isConnectingWebSocket = false  // ⭐ 异常时重置标记
@@ -1657,6 +1695,24 @@
                                     Log.d("HomeViewModel", "✅ 代叫车请求已发送，订单ID: ${responseData.id}, 状态: ${responseData.status}")
                                     _orderState.value = OrderState.Success(responseData)
                                     _events.send(HomeEvent.OrderCreated(responseData))
+                                    
+                                    // ⭐ 修复：延迟发送导航事件，确保 orderState 已被 UI 层收集
+                                    viewModelScope.launch {
+                                        kotlinx.coroutines.delay(100)  // 延迟 100ms
+                                        _events.send(HomeEvent.NavigateToOrderTracking(responseData.id))
+                                        Log.d("HomeViewModel", "🚀 已发送导航事件: orderId=${responseData.id}")
+                                    }
+                                    
+                                    // ⭐ 新增：发送全局事件，通知长辈端显示确认框
+                                    viewModelScope.launch {
+                                        val requesterName = _userNickname.value ?: "亲友"
+                                        MyApplication.sendProxyOrderRequest(
+                                            orderId = responseData.id,
+                                            requesterName = requesterName,
+                                            destination = responseData.destAddress ?: responseData.poiName ?: "未知目的地"
+                                        )
+                                        Log.d("HomeViewModel", "📢 已发送代叫车请求事件：orderId=${responseData.id}, requester=$requesterName")
+                                    }
                                 }
                                 is Map<*, *> -> {
                                     // ⭐ 修复：后端返回 Map 类型（LinkedTreeMap），需要转换
@@ -1698,6 +1754,24 @@
                                         
                                         _orderState.value = OrderState.Success(tempOrder)
                                         _events.send(HomeEvent.OrderCreated(tempOrder))
+                                        
+                                        // ⭐ 修复：延迟发送导航事件，确保 orderState 已被 UI 层收集
+                                        viewModelScope.launch {
+                                            kotlinx.coroutines.delay(100)  // 延迟 100ms
+                                            _events.send(HomeEvent.NavigateToOrderTracking(tempOrder.id))
+                                            Log.d("HomeViewModel", "🚀 已发送导航事件（Map类型）: orderId=${tempOrder.id}")
+                                        }
+                                        
+                                        // ⭐ 新增：发送全局事件，通知长辈端显示确认框
+                                        viewModelScope.launch {
+                                            val requesterName = _userNickname.value ?: "亲友"
+                                            MyApplication.sendProxyOrderRequest(
+                                                orderId = tempOrder.id,
+                                                requesterName = requesterName,
+                                                destination = tempOrder.destAddress ?: "未知目的地"
+                                            )
+                                            Log.d("HomeViewModel", "📢 已发送代叫车请求事件（Map类型）：orderId=${tempOrder.id}, requester=$requesterName")
+                                        }
                                     } catch (e: Exception) {
                                         Log.e("HomeViewModel", "❌ 解析 Map 数据失败", e)
                                         _orderState.value = OrderState.Error("订单创建成功，但解析响应失败")
@@ -1777,7 +1851,11 @@
                         // ⭐ 修复：确认后跳转到行程追踪页
                         if (confirmed) {
                             Log.d("HomeViewModel", "🚀 长辈已同意，准备跳转到行程追踪页: orderId=$orderId")
-                            _events.send(HomeEvent.NavigateToOrderTracking(orderId))
+                            viewModelScope.launch {
+                                kotlinx.coroutines.delay(100)  // 延迟 100ms
+                                _events.send(HomeEvent.NavigateToOrderTracking(orderId))
+                                Log.d("HomeViewModel", "🚀 已发送导航事件（长辈确认）: orderId=$orderId")
+                            }
                         } else {
                             Log.d("HomeViewModel", "❌ 长辈已拒绝，原因：$rejectReason")
                         }
@@ -1875,11 +1953,14 @@
             destination: String
         ) {
             Log.d("HomeViewModel", "📩 收到代叫车请求：orderId=$orderId, from=$requesterName, to=$destination")
+            
             _proxyOrderRequest.value = ProxyOrderRequest(
                 orderId = orderId,
                 requesterName = requesterName,
                 destination = destination
             )
+            
+            Log.d("HomeViewModel", "✅ _proxyOrderRequest 已更新")
         }
         
         /**
@@ -1890,12 +1971,187 @@
         }
         
         /**
+         * ⭐ 新增：解析 GUARD_PUSH 消息（代叫车推送）
+         */
+        private fun parseGuardPushMessage(json: String) {
+            viewModelScope.launch {
+                try {
+                    Log.d("HomeViewModel", "📩 [HomeViewModel] === 开始解析 WebSocket 消息 ===")
+                    Log.d("HomeViewModel", "📩 [HomeViewModel] 收到原始JSON: $json")
+                    
+                    val jsonFormat = kotlinx.serialization.json.Json {
+                        ignoreUnknownKeys = true
+                        isLenient = true
+                    }
+                    
+                    // 先解析外层结构
+                    val jsonObject = org.json.JSONObject(json)
+                    val type = jsonObject.optString("type", "")
+                    
+                    // ⭐ 修复：同时处理 GUARD_PUSH 和 ORDER_CREATED 类型
+                    if (type.uppercase() != "GUARD_PUSH" && type.uppercase() != "ORDER_CREATED") {
+                        // 不是这两种类型，忽略（由 ChatViewModel 处理）
+                        return@launch
+                    }
+                    
+                    Log.d("HomeViewModel", "📩 [HomeViewModel] 收到 $type 类型消息")
+                    
+                    // ⭐ 修复：根据消息类型选择不同的解析方式
+                    when (type.uppercase()) {
+                        "GUARD_PUSH" -> {
+                            // GUARD_PUSH 类型：data 字段是 JSON 字符串
+                            val dataStr = jsonObject.optString("data", "")
+                            if (dataStr.isBlank()) {
+                                Log.w("HomeViewModel", "⚠️ [HomeViewModel] data 字段为空")
+                                return@launch
+                            }
+                            
+                            val pushMessage = jsonFormat.decodeFromString<com.example.myapplication.data.model.GuardPushMessage>(dataStr)
+                            
+                            Log.d("HomeViewModel", "📩 收到亲情守护推送：type=${pushMessage.type}")
+                            Log.d("HomeViewModel", "📊 推送详情：orderId=${pushMessage.orderId}, requester=${pushMessage.proxyUserName}, dest=${pushMessage.destAddress}")
+                            
+                            when (pushMessage.type) {
+                                "NEW_ORDER" -> {
+                                    // ⭐ 代叫车请求通知
+                                    Log.d("HomeViewModel", "🚗 收到代叫车请求：orderId=${pushMessage.orderId}, requester=${pushMessage.proxyUserName}, dest=${pushMessage.destAddress}")
+                                    
+                                    // ⭐ 关键修改：无论前台后台，都发送高优先级通知
+                                    sendIncomingCallNotification(
+                                        orderId = pushMessage.orderId ?: 0L,
+                                        requesterName = pushMessage.proxyUserName ?: "亲友",
+                                        destination = pushMessage.destAddress ?: "未知目的地"
+                                    )
+                                }
+                                
+                                "CHAT_MESSAGE" -> {
+                                    // ⭐ 聊天消息通知（订单内聊天）
+                                    Log.d("HomeViewModel", "💬 收到订单聊天消息：senderId=${pushMessage.senderId}, content=${pushMessage.content}")
+                                }
+                                
+                                else -> {
+                                    Log.w("HomeViewModel", "⚠️ 未知的推送类型：${pushMessage.type}")
+                                }
+                            }
+                        }
+                        
+                        "ORDER_CREATED" -> {
+                            // ORDER_CREATED 类型：data 字段是 JSON 对象
+                            Log.d("HomeViewModel", "🚗 收到代叫车创建消息")
+                            
+                            val dataObj = jsonObject.optJSONObject("data")
+                            if (dataObj == null) {
+                                Log.w("HomeViewModel", "⚠️ [HomeViewModel] data 对象为空")
+                                return@launch
+                            }
+                            
+                            val orderId = dataObj.optLong("orderId", 0L)
+                            val requesterName = dataObj.optString("requesterName", "亲友")
+                            val destAddress = dataObj.optString("destAddress", dataObj.optString("destination", "未知目的地"))
+                            
+                            Log.d("HomeViewModel", "🚗 收到代叫车请求：orderId=$orderId, requester=$requesterName, dest=$destAddress")
+                            
+                            // ⭐ 发送高优先级通知
+                            sendIncomingCallNotification(
+                                orderId = orderId,
+                                requesterName = requesterName,
+                                destination = destAddress
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("HomeViewModel", "❌ 解析亲情守护推送消息失败", e)
+                    Log.e("HomeViewModel", "❌ 原始JSON: $json")
+                }
+            }
+        }
+        
+        /**
+         * ⭐ 发送高优先级代叫车通知（类似来电提醒）
+         * 即使应用在后台，也能弹出横幅通知
+         */
+        private fun sendIncomingCallNotification(orderId: Long, requesterName: String, destination: String) {
+            val channelId = "proxy_order_channel"
+            val channelName = "代叫车请求"
+            val notificationId = orderId.hashCode()
+            
+            // ⭐ 检查通知权限（Android 13+）
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                val hasPermission = appContext.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+                    android.content.pm.PackageManager.PERMISSION_GRANTED
+                
+                if (!hasPermission) {
+                    Log.w("HomeViewModel", "⚠️ 缺少 POST_NOTIFICATIONS 权限，无法发送通知")
+                    return
+                }
+            }
+            
+            // 创建高优先级通知渠道
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                val channel = android.app.NotificationChannel(
+                    channelId,
+                    channelName,
+                    android.app.NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "长辈端代叫车确认请求"
+                    setBypassDnd(true)  // 绕过免打扰模式
+                    enableLights(true)
+                    enableVibration(true)
+                    lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+                }
+                val manager = appContext.getSystemService(android.app.NotificationManager::class.java)
+                manager.createNotificationChannel(channel)
+            }
+            
+            // 创建点击通知后的 Intent
+            val intent = android.content.Intent(appContext, com.example.myapplication.MainActivity::class.java).apply {
+                flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra("PROXY_ORDER_ID", orderId)
+                putExtra("PROXY_ORDER_REQUESTER", requesterName)
+                putExtra("PROXY_ORDER_DESTINATION", destination)
+            }
+            
+            val pendingIntent = android.app.PendingIntent.getActivity(
+                appContext,
+                orderId.hashCode(),
+                intent,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            
+            // 构建通知
+            val notification = androidx.core.app.NotificationCompat.Builder(appContext, channelId)
+                .setSmallIcon(androidx.core.R.drawable.ic_menu_share)  // ⭐ 临时使用系统图标，编译后改为 R.drawable.ic_launcher_foreground
+                .setContentTitle("🚗 新的代叫车请求")
+                .setContentText("$requesterName 为你叫了车：$destination")
+                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                .setCategory(androidx.core.app.NotificationCompat.CATEGORY_CALL)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+                .setDefaults(androidx.core.app.NotificationCompat.DEFAULT_ALL)
+                .setFullScreenIntent(pendingIntent, true)  // ⭐ 关键：允许全屏显示（类似来电）
+                .build()
+            
+            try {
+                val manager = appContext.getSystemService(android.app.NotificationManager::class.java)
+                manager.notify(notificationId, notification)
+                Log.d("HomeViewModel", "🔔 已发送高优先级代叫车通知：orderId=$orderId")
+            } catch (e: SecurityException) {
+                Log.e("HomeViewModel", "❌ 发送通知失败：缺少权限", e)
+            } catch (e: Exception) {
+                Log.e("HomeViewModel", "❌ 发送通知异常", e)
+            }
+        }
+        
+        /**
          * ⭐ 关键修复：长辈模式连接 WebSocket 接收代叫车通知
          */
         private fun connectWebSocketForElderMode() {
+            Log.d("HomeViewModel", "🔌 [connectWebSocketForElderMode] 方法被调用")
             viewModelScope.launch {
+                Log.d("HomeViewModel", "✅ [connectWebSocketForElderMode] viewModelScope.launch 已启动")
                 try {
                     val userId = tokenManager.getUserId()
+                    Log.d("HomeViewModel", "🔍 [connectWebSocketForElderMode] userId=$userId")
                     if (userId == null) {
                         Log.w("HomeViewModel", "⚠️ userId 为空，跳过 WebSocket 连接")
                         return@launch
@@ -1918,9 +2174,30 @@
                     Log.d("HomeViewModel", "🔌 开始连接 WebSocket，sessionId=$wsSessionId")
                     webSocketClient.connect(wsSessionId, token)
                     
-                    // ⭐ 修复：HomeViewModel 只负责建立 WebSocket 连接，不监听消息
-                    // 消息监听由 ChatViewModel 统一处理，避免重复处理
-                    Log.d("HomeViewModel", "✅ WebSocket 连接请求已发送（消息监听由 ChatViewModel 处理）")
+                    // ⭐ 关键修复：HomeViewModel 也需要监听 WebSocket 消息，处理 GUARD_PUSH 类型
+                    // 这样即使没有进入聊天页面，也能收到代叫车推送
+                    
+                    if (!_wsMessageListenerStarted) {
+                        _wsMessageListenerStarted = true
+                        Log.d("HomeViewModel", "🚀 启动 WebSocket 消息监听协程...")
+                        
+                        viewModelScope.launch {
+                            try {
+                                Log.d("HomeViewModel", "🔄 HomeViewModel 开始监听 WebSocket 消息流...")
+                                webSocketClient.messages.collect { serverMessage ->
+                                    Log.d("HomeViewModel", "📥 [WS监听] HomeViewModel 收到消息: ${serverMessage.take(150)}...")
+                                    parseGuardPushMessage(serverMessage)
+                                }
+                            } catch (e: Exception) {
+                                Log.e("HomeViewModel", "❌ HomeViewModel 消息监听异常", e)
+                            }
+                        }
+                        Log.d("HomeViewModel", "✅ WebSocket 消息监听协程已启动")
+                    } else {
+                        Log.w("HomeViewModel", "⏭️ WebSocket 消息监听已存在，跳过重复创建")
+                    }
+                    
+                    Log.d("HomeViewModel", "✅ WebSocket 连接请求已发送（HomeViewModel 和 ChatViewModel 同时监听）")
                     
                 } catch (e: Exception) {
                     Log.e("HomeViewModel", "❌ WebSocket 连接异常", e)

@@ -4,6 +4,8 @@ import android.app.Application
 import android.content.Context
 import android.util.Log
 import com.example.myapplication.core.datastore.TokenManager
+import com.example.myapplication.core.network.ApiService
+import com.example.myapplication.core.network.RetrofitClient
 import com.example.myapplication.debug.HiltDebugChecker
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -13,6 +15,7 @@ import kotlinx.coroutines.flow.SharedFlow
 class MyApplication : Application() {
     companion object {
         lateinit var tokenManager: TokenManager
+        lateinit var apiService: ApiService
         private const val TAG = "MyApplication"
         
         var isHiltInitialized = false
@@ -56,6 +59,10 @@ class MyApplication : Application() {
             
             tokenManager = TokenManager(this)
             Log.d(TAG, "TokenManager initialized successfully")
+            
+            // ⭐ 新增：初始化 ApiService（用于 Token 刷新）
+            apiService = RetrofitClient.instance
+            Log.d(TAG, "ApiService initialized successfully")
             
             // ⭐ 新增：应用启动时检查并清理无效数据
             checkAndClearInvalidData()

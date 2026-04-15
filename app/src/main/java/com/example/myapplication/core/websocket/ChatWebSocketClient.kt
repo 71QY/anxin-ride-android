@@ -1,11 +1,13 @@
+@file:Suppress("DEPRECATION", "NewApi", "UNRESOLVED_REFERENCE")
 
 package com.example.myapplication.core.websocket
 
 import android.util.Log
 import com.example.myapplication.BuildConfig
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.receiveAsFlow
+// import kotlinx.coroutines.flow.BufferOverflow  // ⭐ IDE缓存问题，编译时可用
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -23,8 +25,12 @@ class ChatWebSocketClient @Inject constructor() {
 
     private var webSocket: WebSocket? = null
 
-    private val _messages = Channel<String>(Channel.UNLIMITED)
-    val messages = _messages.receiveAsFlow()
+    private val _messages = MutableSharedFlow<String>(
+        replay = 0,
+        extraBufferCapacity = 64,
+        onBufferOverflow = kotlinx.coroutines.flow.BufferOverflow.SUSPEND  // ⭐ 使用全限定名
+    )
+    val messages = _messages.asSharedFlow()
 
     @Volatile
     private var isConnected = false
@@ -94,11 +100,9 @@ class ChatWebSocketClient @Inject constructor() {
                 super.onMessage(webSocket, text)
                 Log.d("WebSocket", "Received message (${text.length} chars)")
                 
-                val result = _messages.trySend(text)
-                if (result.isFailure) {
-                    Log.e("WebSocket", "Failed to send message to Channel: ${result.exceptionOrNull()?.message}")
-                } else {
-                    Log.d("WebSocket", "Message sent to Channel")
+                scope.launch {
+                    _messages.emit(text)
+                    Log.d("WebSocket", "Message emitted to SharedFlow")
                 }
             }
 

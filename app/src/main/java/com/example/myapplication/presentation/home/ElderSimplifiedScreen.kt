@@ -106,6 +106,13 @@ fun ElderSimplifiedScreen(
     val locationPermissionState = rememberPermissionState(permission = Manifest.permission.ACCESS_FINE_LOCATION)
     val callPhonePermissionState = rememberPermissionState(permission = Manifest.permission.CALL_PHONE)
     
+    // ⭐ 新增：通知权限（Android 13+ 需要）
+    val notificationPermissionState = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        rememberPermissionState(permission = Manifest.permission.POST_NOTIFICATIONS)
+    } else {
+        null
+    }
+    
     // ========== 动画效果 ==========
     val pulseAnimation by animateFloatAsState(
         targetValue = if (isFollowingLocation) 1f else 1.2f,
@@ -144,6 +151,17 @@ fun ElderSimplifiedScreen(
         Log.d("ElderSimplifiedScreen", "📍 当前权限状态: ${locationPermissionState.status}")
         Log.d("ElderSimplifiedScreen", "📍 当前位置: lat=${currentLocation?.latitude}, lng=${currentLocation?.longitude}")
         
+        // ⭐ 关键修复：确保 WebSocket 连接（代叫车推送需要）
+        Log.d("ElderSimplifiedScreen", "🔌 检查 WebSocket 连接状态...")
+        Log.d("ElderSimplifiedScreen", "🚀 即将调用 viewModel.checkElderMode()")
+        viewModel.checkElderMode(
+            onAuthFailure = {
+                Log.w("ElderSimplifiedScreen", "⚠️ Token已失效，触发退出登录")
+                onLogout()
+            }
+        )
+        Log.d("ElderSimplifiedScreen", "✅ viewModel.checkElderMode() 调用完成")
+        
         if (locationPermissionState.status != PermissionStatus.Granted) {
             Log.w("ElderSimplifiedScreen", "⚠️ 权限未授予，请求权限...")
             locationPermissionState.launchPermissionRequest()
@@ -158,6 +176,18 @@ fun ElderSimplifiedScreen(
         }
         
         viewModel.loadGuardianInfo()
+        
+        // ⭐ 新增：请求通知权限（用于代叫车通知）
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationPermissionState?.let { permState ->
+                if (permState.status != PermissionStatus.Granted) {
+                    Log.d("ElderSimplifiedScreen", "🔔 请求通知权限...")
+                    permState.launchPermissionRequest()
+                } else {
+                    Log.d("ElderSimplifiedScreen", "✅ 通知权限已授予")
+                }
+            }
+        }
     }
     
     // 3. ⭐ 新增：首次定位成功后自动移动相机到街道级别
@@ -210,21 +240,26 @@ fun ElderSimplifiedScreen(
     
     // 5. 监听代叫车请求
     LaunchedEffect(proxyOrderRequest) {
-        Log.d("ElderSimplifiedScreen", "📩 proxyOrderRequest变化: $proxyOrderRequest")
         proxyOrderRequest?.let { request ->
             if (request.orderId == lastProxyOrderId && showProxyOrderConfirmDialog) {
-                Log.d("ElderSimplifiedScreen", "⏭️ 跳过重复请求")
                 return@let
             }
             
             Log.d("ElderSimplifiedScreen", "✅ 收到代叫车请求：orderId=${request.orderId}")
+            Log.d("ElderSimplifiedScreen", "👤 代叫人：${request.requesterName}")
+            Log.d("ElderSimplifiedScreen", "📍 目的地：${request.destination}")
+            
             pendingProxyOrderId = request.orderId
             proxyOrderRequesterName = request.requesterName
             proxyOrderDestination = request.destination
             lastProxyOrderId = request.orderId
             showProxyOrderConfirmDialog = true
             
+            Log.d("ElderSimplifiedScreen", "🔔 显示代叫车确认对话框")
+            
             viewModel.clearProxyOrderRequest()
+        } ?: run {
+            Log.d("ElderSimplifiedScreen", "ℹ️ proxyOrderRequest 为 null")
         }
     }
     
@@ -393,11 +428,24 @@ fun ElderSimplifiedScreen(
                         // ⭐ 关闭倾斜手势，防止3D视角
                         map.uiSettings.isTiltGesturesEnabled = false
                         
+                        // ⭐ 优化：只在位置真正变化时才更新和记录日志
+                        var lastLocation: com.amap.api.maps.model.LatLng? = null
                         map.setOnMyLocationChangeListener { location ->
-                            Log.d("ElderSimplifiedScreen", "📍 位置变化：lat=${location.latitude}, lng=${location.longitude}")
-                            viewModel.updateCurrentLocation(location.latitude, location.longitude)
-                            if (location.accuracy > 0) {
-                                viewModel.updateLocationAccuracy(location.accuracy)
+                            val currentLat = location.latitude
+                            val currentLng = location.longitude
+                            
+                            // ⭐ 关键优化：只有位置变化超过 10 米才更新（避免频繁日志）
+                            val hasSignificantChange = lastLocation == null || 
+                                kotlin.math.abs(currentLat - lastLocation!!.latitude) > 0.0001 || 
+                                kotlin.math.abs(currentLng - lastLocation!!.longitude) > 0.0001
+                            
+                            if (hasSignificantChange) {
+                                Log.d("ElderSimplifiedScreen", "📍 位置变化：lat=$currentLat, lng=$currentLng")
+                                viewModel.updateCurrentLocation(currentLat, currentLng)
+                                if (location.accuracy > 0) {
+                                    viewModel.updateLocationAccuracy(location.accuracy)
+                                }
+                                lastLocation = com.amap.api.maps.model.LatLng(currentLat, currentLng)
                             }
                         }
                         
@@ -650,7 +698,11 @@ fun ElderSimplifiedScreen(
                                 }
                                 
                                 OutlinedButton(
-                                    onClick = { onNavigateToChat() },
+                                    onClick = {
+                                        // ⭐ 新增：同步长辈模式状态到 ChatViewModel
+                                        chatViewModel.syncElderMode(true)
+                                        onNavigateToChat()
+                                    },
                                     modifier = Modifier.fillMaxWidth().height(56.dp),
                                     shape = RoundedCornerShape(16.dp),
                                     colors = ButtonDefaults.outlinedButtonColors(
@@ -731,7 +783,11 @@ fun ElderSimplifiedScreen(
                     
                     // 智能体对话按钮
                     OutlinedButton(
-                        onClick = { onNavigateToChat() },
+                        onClick = {
+                            // ⭐ 新增：同步长辈模式状态到 ChatViewModel
+                            chatViewModel.syncElderMode(true)
+                            onNavigateToChat()
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(72.dp),

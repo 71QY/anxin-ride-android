@@ -1,11 +1,16 @@
+@file:Suppress("DEPRECATION", "NewApi")
+
 package com.example.myapplication.presentation.chat
 
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.speech.tts.TextToSpeech
 import android.util.Base64
 import android.util.Log
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.myapplication.MyApplication
@@ -19,6 +24,7 @@ import com.example.myapplication.data.model.PoiData
 import com.example.myapplication.data.model.PoiResponse  // ⭐ 新增：导入 PoiResponse
 import com.example.myapplication.data.model.WebSocketRequest
 import com.example.myapplication.data.model.WebSocketResponse
+import com.example.myapplication.data.model.GuardPushMessage  // ⭐ 新增：亲情守护推送消息
 import com.example.myapplication.domain.repository.IOrderRepository
 import com.example.myapplication.core.datastore.TokenManager
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -59,6 +65,10 @@ class ChatViewModel @Inject constructor(
     val sessionId: StateFlow<String> = _sessionId
 
     private var speechHelper: BaiduSpeechRecognizerHelper? = null
+    
+    // ⭐ 新增：TTS语音播报
+    private var textToSpeech: TextToSpeech? = null
+    private var ttsInitialized = false
 
     private val _orderState = MutableStateFlow<OrderState>(OrderState.Idle)
     val orderState: StateFlow<OrderState> = _orderState
@@ -117,6 +127,18 @@ class ChatViewModel @Inject constructor(
         _currentAccent.value = accent
         Log.d("ChatViewModel", "🌍 切换方言: accent=$accent")
     }
+    
+    // ⭐ 新增：待发送图片列表（最多3张）
+    private val _pendingImages = mutableStateListOf<String>()  // Base64 字符串
+    val pendingImages: List<String> = _pendingImages
+    
+    // ⭐ 新增：是否显示图片数量限制对话框
+    private val _showImageLimitDialog = mutableStateOf(false)
+    val showImageLimitDialog: Boolean = _showImageLimitDialog.value
+    
+    // ⭐ 新增：是否为长辈模式（用于禁用下单功能）
+    private val _isElderMode = MutableStateFlow(false)
+    val isElderMode: StateFlow<Boolean> = _isElderMode.asStateFlow()
 
     init {
         Log.d("ChatViewModel", "=== ChatViewModel 初始化开始 ===")
@@ -316,6 +338,14 @@ class ChatViewModel @Inject constructor(
         }
     }
     
+    /**
+     * ⭐ 新增：同步长辈模式状态
+     */
+    fun syncElderMode(isElder: Boolean) {
+        _isElderMode.value = isElder
+        Log.d("ChatViewModel", "👴 同步长辈模式: isElder=$isElder")
+    }
+    
     // ⭐ 新增：上报位置到后端
     private fun reportLocationToBackend(lat: Double, lng: Double) {
         viewModelScope.launch {
@@ -362,6 +392,28 @@ class ChatViewModel @Inject constructor(
         Log.d("ChatViewModel", "=== sendMessage 被调用 ===")
         Log.d("ChatViewModel", "发送内容：$content")
         Log.d("ChatViewModel", "当前位置：currentLat=$currentLat, currentLng=$currentLng")
+        
+        // ⭐ 新增：长辈端检测下单意图并提示
+        if (_isElderMode.value) {
+            val orderKeywords = listOf("叫车", "打车", "下单", "订车", "派车", "约车")
+            if (orderKeywords.any { content.contains(it) }) {
+                Log.d("ChatViewModel", "👴 长辈端检测到下单意图，拦截并提示")
+                addSystemMessage(
+                    "⚠️ 温馨提示：\n" +
+                    "长辈端暂不支持直接下单叫车功能。\n" +
+                    "\n" +
+                    "如需叫车，请：\n" +
+                    "1. 联系您的亲友代劳\n" +
+                    "2. 使用普通端账号操作\n" +
+                    "\n" +
+                    "💡 您可以继续使用其他功能：\n" +
+                    "• 查询地点信息\n" +
+                    "• 图片识别\n" +
+                    "• 路线咨询"
+                )
+                return  // ⭐ 拦截，不发送到后端
+            }
+        }
 
         val userMessage = ChatMessage(
             id = UUID.randomUUID().toString(),
@@ -542,8 +594,11 @@ class ChatViewModel @Inject constructor(
                 }
             }
             bitmap?.let {
-                // ⭐ 修改：使用 WebSocket 方式识别图片（后端推荐）
-                sendImage(it)
+                // ⭐ 修改：压缩并添加到待发送列表
+                val base64 = withContext(Dispatchers.IO) {
+                    compressAndToBase64(it, maxSizeKB = 800)
+                }
+                addPendingImage(base64)
             }
         }
     }
@@ -552,6 +607,134 @@ class ChatViewModel @Inject constructor(
     fun sendImage(bitmap: Bitmap) {
         Log.d("ChatViewModel", "=== 开始图片识别 (WebSocket) ===")
         recognizeImageByWebSocket(bitmap)
+    }
+    
+    // ⭐ 新增：添加图片到待发送列表（最多3张）
+    fun addPendingImageFromBitmap(bitmap: Bitmap) {
+        viewModelScope.launch {
+            val base64 = compressAndToBase64(bitmap, maxSizeKB = 800)
+            addPendingImage(base64)
+        }
+    }
+    
+    // ⭐ 新增：添加图片到待发送列表（最多3张）
+    fun addPendingImage(base64: String) {
+        if (_pendingImages.size >= 3) {
+            _showImageLimitDialog.value = true
+            Log.w("ChatViewModel", "⚠️ 图片数量已达上限（3张）")
+            return
+        }
+        _pendingImages.add(base64)
+        Log.d("ChatViewModel", "✅ 添加待发送图片，当前数量：${_pendingImages.size}")
+    }
+    
+    // ⭐ 新增：删除指定索引的图片
+    fun removePendingImage(index: Int) {
+        if (index in _pendingImages.indices) {
+            _pendingImages.removeAt(index)
+            Log.d("ChatViewModel", "🗑️ 删除图片，剩余数量：${_pendingImages.size}")
+        }
+    }
+    
+    // ⭐ 新增：清空所有待发送图片
+    fun clearPendingImages() {
+        _pendingImages.clear()
+        Log.d("ChatViewModel", "🗑️ 清空所有待发送图片")
+    }
+    
+    // ⭐ 新增：隐藏图片数量限制对话框
+    fun dismissImageLimitDialog() {
+        _showImageLimitDialog.value = false
+    }
+    
+    // ⭐ 新增：批量发送所有待发送图片
+    fun sendAllPendingImages() {
+        sendAllPendingImagesWithText(null)
+    }
+    
+    /**
+     * ⭐ 新增：批量发送图片（支持附带文字说明）
+     * @param text 可选的文字说明，如果为 null 则只发送图片
+     */
+    fun sendAllPendingImagesWithText(text: String?) {
+        if (_pendingImages.isEmpty()) {
+            Log.w("ChatViewModel", "⚠️ 没有待发送的图片")
+            return
+        }
+        
+        viewModelScope.launch {
+            Log.d("ChatViewModel", "📤 开始批量发送 ${_pendingImages.size} 张图片")
+            
+            // 位置信息检查
+            if (currentLat == null || currentLng == null) {
+                addSystemMessage("🛰️ 正在获取您的位置...")
+                delay(3000)
+                if (currentLat == null || currentLng == null) {
+                    addSystemMessage("⚠️ 位置获取失败，请检查是否授予定位权限")
+                    return@launch
+                }
+            }
+            
+            // 构建多图片请求（对齐后端文档 1.2.2）
+            val imageRequest = JSONObject().apply {
+                put("type", "image")
+                put("sessionId", sessionId.value)
+                put("imageBase64", _pendingImages[0])  // 主图片
+                
+                if (_pendingImages.size > 1) {
+                    // 额外图片数组
+                    val additionalImages = JSONArray()
+                    for (i in 1 until _pendingImages.size) {
+                        additionalImages.put(_pendingImages[i])
+                    }
+                    put("additionalImages", additionalImages)
+                    put("imageCount", _pendingImages.size)
+                } else {
+                    put("imageCount", 1)
+                }
+                
+                put("lat", currentLat!!)
+                put("lng", currentLng!!)
+            }
+            
+            Log.d("ChatViewModel", "发送多图片 WebSocket 消息：type=image, count=${_pendingImages.size}")
+            
+            // ⭐ 显示用户发送的图片消息（支持多张 + 文字说明）
+            val content = if (!text.isNullOrBlank()) {
+                "$text\n📷 [${_pendingImages.size}张图片]"
+            } else {
+                "📷 [${_pendingImages.size}张图片]"
+            }
+            
+            val imageMessage = ChatMessage(
+                id = UUID.randomUUID().toString(),
+                content = content,
+                isUser = true,
+                timestamp = System.currentTimeMillis(),
+                imageBase64 = _pendingImages[0],  // 主图
+                additionalImages = if (_pendingImages.size > 1) _pendingImages.subList(1, _pendingImages.size) else null  // ⭐ 额外图片
+            )
+            _messages.value += imageMessage
+            
+            // 发送 WebSocket 消息
+            if (webSocketClient.isConnected()) {
+                webSocketClient.sendRaw(imageRequest.toString())
+                Log.d("ChatViewModel", "✅ 多图片消息已发送")
+            } else {
+                Log.e("ChatViewModel", "❌ WebSocket 未连接，尝试重连...")
+                reconnectWebSocket()
+                delay(2000)
+                if (webSocketClient.isConnected()) {
+                    webSocketClient.sendRaw(imageRequest.toString())
+                    Log.d("ChatViewModel", "✅ 重连后多图片消息已发送")
+                } else {
+                    addSystemMessage("❌ 网络连接已断开，请检查网络")
+                }
+            }
+            
+            // 清空待发送列表
+            clearPendingImages()
+        }
     }
 
     // ⭐ 新增：WebSocket 方式图片识别（后端推荐）
@@ -586,7 +769,13 @@ class ChatViewModel @Inject constructor(
                 Log.w("ChatViewModel", "⚠️ 图片较大：${base64SizeKB}KB，可能影响识别速度")
             }
             
-            Log.d("ChatViewModel", "✅ 图片压缩成功：原始=${bitmap.byteCount / 1024}KB, 压缩后=${base64SizeKB}KB")
+            // 计算Bitmap大小（兼容所有API级别）
+            val bitmapSizeKB = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
+                bitmap.allocationByteCount / 1024
+            } else {
+                bitmap.byteCount / 1024
+            }
+            Log.d("ChatViewModel", "✅ 图片压缩成功：原始=${bitmapSizeKB}KB, 压缩后=${base64SizeKB}KB")
             Log.d("ChatViewModel", "imageBase64 length=${base64.length}")
 
             // ⭐ 显示用户发送的图片消息
@@ -964,7 +1153,13 @@ class ChatViewModel @Inject constructor(
                 Log.w("ChatViewModel", "⚠️ 图片较大：${base64SizeKB}KB，可能影响识别速度")
             }
             
-            Log.d("ChatViewModel", "✅ 图片压缩成功：原始=${bitmap.byteCount / 1024}KB, 压缩后=${base64SizeKB}KB")
+            // 计算Bitmap大小（兼容所有API级别）
+            val bitmapSizeKB = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
+                bitmap.allocationByteCount / 1024
+            } else {
+                bitmap.byteCount / 1024
+            }
+            Log.d("ChatViewModel", "✅ 图片压缩成功：原始=${bitmapSizeKB}KB, 压缩后=${base64SizeKB}KB")
             Log.d("ChatViewModel", "imageBase64 length=${base64.length}")
 
             // ⭐ 显示用户发送的图片消息
@@ -1396,7 +1591,10 @@ class ChatViewModel @Inject constructor(
         _poiList.value = emptyList()
     }
 
-    private fun addSystemMessage(content: String) {
+    /**
+     * ⭐ 新增：添加系统消息（公开方法，供外部调用）
+     */
+    fun addSystemMessage(content: String) {
         val systemMessage = ChatMessage(
             id = UUID.randomUUID().toString(),
             content = content,
@@ -1647,6 +1845,15 @@ class ChatViewModel @Inject constructor(
                 
                 response.type?.lowercase() == "error" -> {
                     addSystemMessage("❌ 错误：${response.message}")
+                }
+                
+                response.type?.uppercase() == "GUARD_PUSH" -> {
+                    // ⭐ 亲情守护推送（代叫车通知等）
+                    Log.d("ChatViewModel", "📩 收到 GUARD_PUSH 类型消息")
+                    Log.d("ChatViewModel", "原始JSON: $json")
+                    handleGuardPushMessage(json)
+                    // ⭐ 重要：处理完成后直接返回，不进入 else 分支
+                    return
                 }
 
                 else -> {
@@ -1990,6 +2197,11 @@ class ChatViewModel @Inject constructor(
 
         // 只清理语音助手
         speechHelper?.destroy()
+        
+        // ⭐ 清理 TTS
+        textToSpeech?.stop()
+        textToSpeech?.shutdown()
+        textToSpeech = null
 
         super.onCleared()
     }
@@ -2010,12 +2222,19 @@ class ChatViewModel @Inject constructor(
     }
 
     // ⭐ 新增：图片压缩函数（强制压缩到指定大小以内）
-    private suspend fun compressAndToBase64(source: Bitmap, maxSizeKB: Int = 500): String {
+    // ⭐ 修改：公开方法，供 ChatScreen 调用
+    suspend fun compressAndToBase64(source: Bitmap, maxSizeKB: Int = 500): String {
         return withContext(Dispatchers.IO) {
             var bitmap = source
             
             Log.d("ImageCompression", "========== 图片压缩信息 ==========")
-            Log.d("ImageCompression", "原始文件大小: ${source.byteCount / 1024} KB")
+            // 计算Bitmap大小（兼容所有API级别）
+            val sourceSizeKB = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
+                source.allocationByteCount / 1024
+            } else {
+                source.byteCount / 1024
+            }
+            Log.d("ImageCompression", "原始文件大小: ${sourceSizeKB} KB")
             Log.d("ImageCompression", "原始分辨率: ${source.width}x${source.height}")
             
             // 第 1 步：缩小分辨率（最大 1280x1280，提升清晰度）
@@ -2102,11 +2321,91 @@ class ChatViewModel @Inject constructor(
         addSystemMessage("❌ $message")
     }
     
-    // ⭐ 新增：辅助函数 - 语音播报（预留接口）
+    // ⭐ 新增：辅助函数 - 语音播报（使用系统 TTS）
+    fun initTTS(context: Context) {
+        if (textToSpeech != null) return
+        
+        textToSpeech = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                val result = textToSpeech?.setLanguage(Locale.CHINESE)
+                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    Log.e("ChatViewModel", "❌ TTS 不支持中文")
+                    ttsInitialized = false
+                } else {
+                    Log.d("ChatViewModel", "✅ TTS 初始化成功")
+                    ttsInitialized = true
+                }
+            } else {
+                Log.e("ChatViewModel", "❌ TTS 初始化失败")
+                ttsInitialized = false
+            }
+        }
+    }
+    
     private fun speak(text: String) {
-        // TODO: 集成 TTS 语音播报功能
-        Log.d("ChatViewModel", "🔊 语音播报: $text")
-        // 未来可以集成百度 TTS 或系统 TTS
-        // ttsHelper?.speak(text)
+        if (!ttsInitialized || textToSpeech == null) {
+            Log.w("ChatViewModel", "⚠️ TTS 未初始化，跳过语音播报")
+            return
+        }
+        
+        try {
+            // ⭐ 长辈模式下才播报
+            if (_isElderMode.value) {
+                textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, null, null)
+                Log.d("ChatViewModel", "🔊 语音播报: $text")
+            } else {
+                Log.d("ChatViewModel", "ℹ️ 非长辈模式，跳过语音播报")
+            }
+        } catch (e: Exception) {
+            Log.e("ChatViewModel", "❌ 语音播报异常", e)
+        }
+    }
+    
+    /**
+     * ⭐ 处理亲情守护推送消息（NEW_ORDER / CHAT_MESSAGE）
+     */
+    private fun handleGuardPushMessage(json: String) {
+        viewModelScope.launch {
+            try {
+                val jsonFormat = Json {
+                    ignoreUnknownKeys = true
+                    isLenient = true
+                }
+                
+                val pushMessage = jsonFormat.decodeFromString<GuardPushMessage>(json)
+                
+                Log.d("ChatViewModel", "📩 收到亲情守护推送：type=${pushMessage.type}")
+                
+                when (pushMessage.type) {
+                    "NEW_ORDER" -> {
+                        // ⭐ 代叫车请求通知
+                        Log.d("ChatViewModel", "🚗 收到代叫车请求：orderId=${pushMessage.orderId}, requester=${pushMessage.proxyUserName}, dest=${pushMessage.destAddress}")
+                        
+                        // 触发全局事件，让 HomeViewModel 接收
+                        MyApplication.sendProxyOrderRequest(
+                            orderId = pushMessage.orderId ?: 0L,
+                            requesterName = pushMessage.proxyUserName ?: "亲友",
+                            destination = pushMessage.destAddress ?: "未知目的地"
+                        )
+                        
+                        Log.d("ChatViewModel", "✅ 已发送全局代叫车请求事件")
+                    }
+                    
+                    "CHAT_MESSAGE" -> {
+                        // ⭐ 聊天消息通知（订单内聊天）
+                        Log.d("ChatViewModel", "💬 收到订单聊天消息：senderId=${pushMessage.senderId}, content=${pushMessage.content}")
+                        
+                        // TODO: 如果当前在订单追踪页面，可以显示聊天消息
+                        // 目前先记录日志
+                    }
+                    
+                    else -> {
+                        Log.w("ChatViewModel", "⚠️ 未知的推送类型：${pushMessage.type}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("ChatViewModel", "❌ 解析亲情守护推送消息失败", e)
+            }
+        }
     }
 }

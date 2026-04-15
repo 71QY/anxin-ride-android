@@ -45,7 +45,6 @@ import com.amap.api.maps.model.PolylineOptions
 import com.example.myapplication.map.MapViewComposable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -61,6 +60,25 @@ fun OrderTrackingScreen(
     
     // ⭐ 修复：在 Composable 顶层创建 scope
     val scope = rememberCoroutineScope()
+    
+    // ⭐ 新增：监听事件（代叫车确认提示）
+    LaunchedEffect(Unit) {
+        viewModel.events.collect { event ->
+            when (event) {
+                is OrderTrackingEvent.ProxyOrderConfirmed -> {
+                    if (event.confirmed) {
+                        Toast.makeText(context, "✅ 长辈已确认，司机正在赶来", Toast.LENGTH_LONG).show()
+                    } else {
+                        val reason = event.rejectReason ?: "未知原因"
+                        Toast.makeText(context, "❌ 长辈拒绝：$reason", Toast.LENGTH_LONG).show()
+                        // 延迟返回上一页
+                        kotlinx.coroutines.delay(2000)
+                        onBackClick()
+                    }
+                }
+            }
+        }
+    }
 
     // 地图相关
     var aMap by remember { mutableStateOf<AMap?>(null) }
@@ -219,21 +237,21 @@ private fun OrderTrackingContent(
     Column(
         modifier = Modifier.fillMaxSize()
     ) {
-        // 1. 地图区域（占70%）
+        // 1. 地图区域（占60%，给用户更多空间看到地图）
         MapViewComposable(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(0.7f),
+                .weight(0.6f),
             onMapReady = onMapReady,
             onMapClick = {},
             onPoiClick = {}
         )
 
-        // 2. 底部信息面板（占30%）
+        // 2. 底部信息面板（占40%，让用户看到更多内容）
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(0.3f),
+                .weight(0.4f),
             shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
             shadowElevation = 8.dp,
             color = Color.White

@@ -45,6 +45,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle  // ⭐ 用于 StateFlow 收集
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -58,11 +59,13 @@ import com.example.myapplication.presentation.chat.ChatScreen
 import com.example.myapplication.presentation.chat.ChatViewModel
 import com.example.myapplication.presentation.chat.ChatMode
 import com.example.myapplication.presentation.chat.ChatListScreen
+import com.example.myapplication.presentation.chat.PrivateChatScreen  // ⭐ 新增：私聊界面
 import com.example.myapplication.presentation.home.HomeScreen
 import com.example.myapplication.presentation.home.HomeViewModel
 import com.example.myapplication.presentation.login.LoginScreen
 import com.example.myapplication.presentation.order.OrderDetailScreen
 import com.example.myapplication.presentation.order.OrderListScreen
+import com.example.myapplication.presentation.orderTracking.OrderTrackingScreen  // ⭐ 新增：订单追踪页面
 import com.example.myapplication.presentation.profile.ProfileScreen
 import com.example.myapplication.service.AgentFloatService
 import com.example.myapplication.ui.theme.AnxinChuxingTheme
@@ -119,7 +122,18 @@ class MainActivity : ComponentActivity() {
                         Log.d("MainActivity", "App started, preparing location")
                     }
 
-                    NavHost(navController = navController, startDestination = "login") {
+                    // ⭐ 关键修复：自动登录逻辑 - 同步获取 userId
+                    val syncUserId = homeViewModel.getUserIdSync()
+                    val hasValidToken = syncUserId != null
+                    val startDestination = if (hasValidToken) "main" else "login"
+                    
+                    Log.d("MainActivity", "🔍 === 自动登录检查 ===")
+                    Log.d("MainActivity", "🔍 getUserIdSync()=$syncUserId")
+                    Log.d("MainActivity", "🔍 hasValidToken=$hasValidToken")
+                    Log.d("MainActivity", "🔍 startDestination=$startDestination")
+                    Log.d("MainActivity", "🔍 ====================")
+                    
+                    NavHost(navController = navController, startDestination = startDestination) {
                         composable("login") {
                             LoginScreen(
                                 onLoginSuccess = {
@@ -150,6 +164,7 @@ class MainActivity : ComponentActivity() {
                             MyApplicationApp(
                                 homeViewModel = homeViewModel,
                                 chatViewModel = chatViewModel,
+                                navController = navController,  // ⭐ 新增：传入 navController
                                 onNavigateToOrderDetail = { orderId ->
                                     navController.navigate("order_detail/$orderId")
                                 },
@@ -180,24 +195,42 @@ class MainActivity : ComponentActivity() {
                                 Text("Invalid order ID")
                             }
                         }
+                        // ⭐ 新增：订单追踪页面路由（实时显示司机位置、订单状态、路线）
+                        composable("order_tracking/{orderId}") { backStackEntry ->
+                            val orderId = backStackEntry.arguments?.getString("orderId")?.toLongOrNull()
+                            if (orderId != null) {
+                                OrderTrackingScreen(
+                                    orderId = orderId,
+                                    onBackClick = { navController.popBackStack() }
+                                )
+                            } else {
+                                Text("Invalid order ID")
+                            }
+                        }
                         composable("orderList") {
                             OrderListScreen(
                                 onOrderClick = { orderId ->
-                                    navController.navigate("order_detail/$orderId")
+                                    // ⭐ 修改：跳转到订单追踪页面（实时显示司机位置、路线）
+                                    navController.navigate("order_tracking/$orderId")
                                 }
                             )
                         }
                         composable("chat") {
+                            val isElderMode by homeViewModel.isElderMode.collectAsStateWithLifecycle()  // ⭐ 新增：获取长辈模式状态
+                            
                             ChatScreen(
                                 viewModel = chatViewModel,
                                 onNavigateToOrder = { orderId: Long ->
                                     if (orderId == -1L) {
-                                        navController.popBackStack()
+                                        // ⭐ 修复：从智能体对话返回应该回到 main 页面（首页）
+                                        navController.popBackStack("main", inclusive = false)
                                     } else {
-                                        navController.navigate("order_detail/$orderId")
+                                        // ⭐ 修改：跳转到订单追踪页面（实时显示司机位置、路线）
+                                        navController.navigate("order_tracking/$orderId")
                                     }
                                 },
-                                chatMode = ChatMode.AGENT
+                                chatMode = ChatMode.AGENT,
+                                isElderMode = isElderMode  // ⭐ 新增：传递长辈模式标识
                             )
                         }
                         composable("agent_chat") {
@@ -210,6 +243,23 @@ class MainActivity : ComponentActivity() {
                                     navController.navigate("chat")
                                 }
                             )
+                        }
+                        // ⭐ 新增：私聊界面路由
+                        composable("private_chat/{contactId}/{contactName}") { backStackEntry ->
+                            val contactId = backStackEntry.arguments?.getString("contactId")?.toLongOrNull()
+                            val contactName = backStackEntry.arguments?.getString("contactName") ?: "未知"
+                            val isElderMode by homeViewModel.isElderMode.collectAsStateWithLifecycle()  // ⭐ 修复：使用 collectAsStateWithLifecycle
+                            
+                            if (contactId != null) {
+                                PrivateChatScreen(
+                                    guardianId = contactId,
+                                    guardianName = contactName,
+                                    onBackClick = { navController.popBackStack() },
+                                    isElderMode = isElderMode
+                                )
+                            } else {
+                                Text("无效的联系人ID")
+                            }
                         }
                     }
                 }
@@ -257,6 +307,7 @@ class MainActivity : ComponentActivity() {
 fun MyApplicationApp(
     homeViewModel: HomeViewModel,
     chatViewModel: ChatViewModel,
+    navController: NavHostController,  // ⭐ 新增：传入 navController
     onNavigateToOrderDetail: (Long) -> Unit = {},
     onNavigateToOrderList: () -> Unit = {},
     onNavigateToChat: () -> Unit = {}
@@ -364,10 +415,19 @@ fun MyApplicationApp(
                 "home" -> {
                     HomeScreen(
                         viewModel = homeViewModel,
+                        chatViewModel = chatViewModel,  // ⭐ 关键修复：传入 chatViewModel，确保 WebSocket 连接
                         onNavigateToProfile = { currentDestination = "profile" },
                         onRequestLocationPermission = { },
-                        onNavigateToOrder = { orderId -> onNavigateToOrderDetail(orderId.toLongOrNull() ?: 0L) },
-                        onNavigateToChat = onNavigateToChat
+                        onNavigateToOrder = { orderId -> 
+                            // ⭐ 修改：跳转到订单追踪页面（实时显示司机位置、路线）
+                            navController.navigate("order_tracking/$orderId")
+                        },
+                        onNavigateToChat = onNavigateToChat,
+                        onNavigateToOrderTracking = { orderId ->
+                            // ⭐ 新增：跳转到行程追踪页面
+                            Log.d("MainActivity", "🚀 收到跳转事件，前往行程追踪: orderId=$orderId")
+                            navController.navigate("order_tracking/$orderId")
+                        }
                     )
                 }
                 "favorites" -> {
@@ -399,34 +459,91 @@ fun MyApplicationApp(
                     }
                 }
                 "chat" -> {
+                    // ⭐ 新增：收集长辈/亲友列表
+                    val isElderMode by homeViewModel.isElderMode.collectAsStateWithLifecycle()
+                    val guardianList by homeViewModel.guardianInfoList.collectAsStateWithLifecycle()
+                    val elderList by homeViewModel.elderInfoList.collectAsStateWithLifecycle()
+                    
                     ChatListScreen(
                         onBackClick = { currentDestination = "home" },
                         onSessionSelected = { sessionId: String ->
+                            Log.d("MainActivity", "选择会话: $sessionId")
+                            // ⭐ 解析 sessionId，跳转到私聊界面
+                            if (sessionId.startsWith("elder_")) {
+                                val elderId = sessionId.removePrefix("elder_").toLongOrNull()
+                                val elder = elderList.find { it.userId.toString() == elderId.toString() }
+                                if (elderId != null && elder != null) {
+                                    navController.navigate("private_chat/$elderId/${elder.name}")
+                                }
+                            } else if (sessionId.startsWith("guardian_")) {
+                                val guardianId = sessionId.removePrefix("guardian_").toLongOrNull()
+                                val guardian = guardianList.find { it.userId.toString() == guardianId.toString() }
+                                if (guardianId != null && guardian != null) {
+                                    navController.navigate("private_chat/$guardianId/${guardian.name}")
+                                }
+                            }
                         },
                         onNavigateToAgent = {
                             currentDestination = "agent_chat"
-                        }
+                        },
+                        guardianList = if (isElderMode) guardianList else emptyList(),  // ⭐ 长辈模式显示亲友
+                        elderList = if (!isElderMode) elderList else emptyList(),  // ⭐ 普通模式显示长辈
+                        showBackButton = false  // ⭐ 底部导航不显示返回键
                     )
                 }
                 "agent_chat" -> {
                     ChatScreen(
                         viewModel = chatViewModel,
-                        onNavigateToOrder = onNavigateToOrderDetail,
+                        onNavigateToOrder = { orderId: Long ->
+                            // ⭐ 修改：跳转到订单追踪页面（实时显示司机位置、路线）
+                            navController.navigate("order_tracking/$orderId")
+                        },
                         chatMode = ChatMode.AGENT
                     )
                 }
                 "profile" -> {
                     ProfileScreen(
-                        onNavigateToOrderList = onNavigateToOrderList
+                        onNavigateToOrderList = onNavigateToOrderList,
+                        onNavigateToGuardian = {
+                            // ⭐ 跳转到亲情守护管理页面
+                            Log.d("MainActivity", "👨‍👩‍👧 === 点击亲情守护，跳转至 GuardianManagementScreen ===")
+                            currentDestination = "guardian_management"
+                        },
+                        onNavigateToAccount = {
+                            // ⭐ 跳转到账号安全页面
+                            Log.d("MainActivity", "🔒 === 点击账号安全，跳转至 AccountSecurityScreen ===")
+                            currentDestination = "account_security"
+                        }
+                    )
+                }
+                "guardian_management" -> {
+                    // ⭐ 亲情守护管理页面
+                    com.example.myapplication.presentation.guardian.GuardianManagementScreen(
+                        onNavigateBack = { currentDestination = "profile" }
+                    )
+                }
+                "account_security" -> {
+                    // ⭐ 账号安全页面
+                    com.example.myapplication.presentation.account.AccountSecurityScreen(
+                        onNavigateBack = { currentDestination = "profile" }
                     )
                 }
                 else -> {
                     HomeScreen(
                         viewModel = homeViewModel,
+                        chatViewModel = chatViewModel,  // ⭐ 关键修复：传入 chatViewModel，确保 WebSocket 连接
                         onNavigateToProfile = { currentDestination = "profile" },
                         onRequestLocationPermission = { },
-                        onNavigateToOrder = { orderId -> onNavigateToOrderDetail(orderId.toLongOrNull() ?: 0L) },
-                        onNavigateToChat = onNavigateToChat
+                        onNavigateToOrder = { orderId -> 
+                            // ⭐ 修改：跳转到订单追踪页面（实时显示司机位置、路线）
+                            navController.navigate("order_tracking/$orderId")
+                        },
+                        onNavigateToChat = onNavigateToChat,
+                        onNavigateToOrderTracking = { orderId ->
+                            // ⭐ 新增：跳转到行程追踪页面
+                            Log.d("MainActivity", "🚀 收到跳转事件，前往行程追踪: orderId=$orderId")
+                            navController.navigate("order_tracking/$orderId")
+                        }
                     )
                 }
             }

@@ -81,7 +81,7 @@ fun HomeScreen(
     val isProfileLoaded by viewModel.isProfileLoaded.collectAsStateWithLifecycle()
     
     // ⭐ 首次加载时检查长辈模式（不需要再次调用 loadProfile，init 块已经调用）
-    var hasCheckedElderMode by rememberSaveable { mutableStateOf(false) }
+    var hasCheckedElderMode by remember { mutableStateOf(false) }  // ⭐ 修复：改用 remember，应用重启后会重置
     LaunchedEffect(Unit) {
         if (hasCheckedElderMode) {
             Log.d("HomeScreen", "⚠️ checkElderMode 已经执行过，跳过")
@@ -89,6 +89,7 @@ fun HomeScreen(
         }
         
         Log.d("HomeScreen", "🚀 HomeScreen 初始化，开始检查长辈模式...")
+        
         hasCheckedElderMode = true
         viewModel.checkElderMode(
             onAuthFailure = {

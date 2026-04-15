@@ -12,8 +12,10 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
@@ -35,6 +37,10 @@ class OrderTrackingViewModel @Inject constructor(
 
     private val _etaMinutes = MutableStateFlow<Int?>(null)
     val etaMinutes: StateFlow<Int?> = _etaMinutes.asStateFlow()
+
+    // ⭐ 新增：事件流（用于UI提示）
+    private val _events = MutableSharedFlow<OrderTrackingEvent>()
+    val events = _events.asSharedFlow()
 
     // ==================== WebSocket 监听 ====================
     
@@ -256,14 +262,24 @@ class OrderTrackingViewModel @Inject constructor(
         viewModelScope.launch(Dispatchers.Main) {
             val confirmed = wsMessage.confirmed
             val rejectReason = wsMessage.rejectReason
-            
+                
             if (confirmed == true) {
                 Log.d("OrderTrackingVM", "✅ 长辈已同意代叫车")
-                // TODO: 显示提示“长辈已确认，司机正在赶来”
+                // 显示成功提示
+                val currentState = _uiState.value
+                if (currentState is OrderTrackingUiState.Success) {
+                    // 更新订单状态，添加提示信息
+                    val updatedOrder = currentState.order.copy(
+                        status = 2  // 司机接单中
+                    )
+                    _uiState.value = OrderTrackingUiState.Success(updatedOrder)
+                }
+                // 触发事件通知UI显示Toast
+                _events.emit(OrderTrackingEvent.ProxyOrderConfirmed(true, null))
             } else {
                 Log.d("OrderTrackingVM", "❌ 长辈已拒绝代叫车，原因：$rejectReason")
-                // TODO: 显示提示“长辈拒绝了代叫车，原因：XXX”
-                // 可选：关闭当前页面或返回上一页
+                // 显示拒绝提示并返回上一页
+                _events.emit(OrderTrackingEvent.ProxyOrderConfirmed(false, rejectReason))
             }
         }
     }
@@ -320,4 +336,16 @@ sealed class OrderTrackingUiState {
     object Loading : OrderTrackingUiState()
     data class Success(val order: Order) : OrderTrackingUiState()
     data class Error(val message: String) : OrderTrackingUiState()
+}
+
+/**
+ * ⭐ 新增：事件密封类（用于UI提示）
+ */
+sealed class OrderTrackingEvent {
+    /**
+     * 代叫车确认结果
+     * @param confirmed true-同意，false-拒绝
+     * @param rejectReason 拒绝原因
+     */
+    data class ProxyOrderConfirmed(val confirmed: Boolean, val rejectReason: String?) : OrderTrackingEvent()
 }

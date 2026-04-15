@@ -59,6 +59,10 @@ interface ApiService {
     @POST("auth/logout")
     suspend fun logout(): Result<Unit>
     
+    // ⭐ 新增：刷新 Token 接口
+    @POST("auth/refresh-token")
+    suspend fun refreshToken(): Result<LoginResponse>
+    
     // ⭐ 新增：完善账号信息接口
     @POST("user/complete-profile")
     suspend fun completeProfile(@Body request: CompleteProfileRequest): Result<Unit>
