@@ -1770,6 +1770,92 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 
+                // ⭐ 新增：处理图片识别结果（image_result）
+                response.type?.uppercase() == "IMAGE_RESULT" ||
+                response.type?.uppercase() == "IMAGE_RECOGNITION" -> {
+                    Log.d("ChatViewModel", "📸 收到 IMAGE_RESULT/IMAGE_RECOGNITION 类型消息")
+                    Log.d("ChatViewModel", "message=${response.message}")
+                    Log.d("ChatViewModel", "data=${response.data}")
+                    
+                    // ⭐ 提取 OCR 文本
+                    val ocrText = response.data?.let { dataObj ->
+                        try {
+                            val jsonObj = JSONObject(dataObj.toString())
+                            jsonObj.optString("ocrText", null)
+                        } catch (e: Exception) {
+                            Log.e("ChatViewModel", "❌ 提取 OCR 文本失败", e)
+                            null
+                        }
+                    }
+                    
+                    // ⭐ 提取地点列表
+                    val places = extractPlaces(response, rawJson = json)
+                    val poiList = if (places.isNotEmpty()) {
+                        places
+                    } else {
+                        extractPoiList(response.data)
+                    }
+                    
+                    // ⭐ 构建回复消息
+                    val replyMessage = buildString {
+                        if (!ocrText.isNullOrBlank()) {
+                            append("📷 **图片识别结果：**\n")
+                            append("识别文字：$ocrText\n\n")
+                        }
+                        
+                        if (!response.message.isNullOrBlank()) {
+                            append("${response.message}\n\n")
+                        }
+                        
+                        if (poiList.isNotEmpty()) {
+                            append("📍 找到 ${poiList.size} 个相关地点：\n\n")
+                            poiList.take(3).forEachIndexed { index, poi ->
+                                append("${index + 1}. **${poi.name}**\n")
+                                if (!poi.address.isNullOrBlank()) {
+                                    append("   🏠 地址：${poi.address}\n")
+                                }
+                                if (poi.distance != null) {
+                                    append("   📏 距离：${String.format("%.1f", poi.distance / 1000)}公里\n")
+                                }
+                                if (index < 2) append("\n")
+                            }
+                            
+                            if (poiList.size > 3) {
+                                append("\n💡 还有 ${poiList.size - 3} 个结果，请点击查看详情")
+                            }
+                        } else {
+                            append("💡 您可以：\n")
+                            append("• 点击输入框上方的地点名称直接下单\n")
+                            append("• 或者继续提问，我会帮您查找")
+                        }
+                    }
+                    
+                    // ⭐ 显示消息
+                    val chatMessage = ChatMessage(
+                        id = UUID.randomUUID().toString(),
+                        content = replyMessage,
+                        isUser = false,
+                        timestamp = System.currentTimeMillis(),
+                        suggestions = poiList.take(3).map { it.name }
+                    )
+                    _messages.value += chatMessage
+                    
+                    // ⭐ 更新 POI 列表和候选列表
+                    if (poiList.isNotEmpty()) {
+                        _poiList.value = poiList
+                        _candidates.value = poiList
+                        
+                        // ⭐ 如果需要确认，弹出候选列表对话框
+                        if (response.needConfirm) {
+                            Log.d("ChatViewModel", "🔔 需要确认，弹出候选列表对话框")
+                            _showCandidatesDialog.value = true
+                        }
+                    }
+                    
+                    // ⭐ 语音播报
+                    speak(if (poiList.isNotEmpty()) "找到 ${poiList.size} 个相关地点" else "识别完成")
+                }
+                
                 response.type?.uppercase() == "CHAT" -> {
                     // ⭐ AI 聊天回复
                     if (!response.message.isNullOrBlank()) {

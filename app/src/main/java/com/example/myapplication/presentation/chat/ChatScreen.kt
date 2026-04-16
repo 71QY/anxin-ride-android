@@ -36,7 +36,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.myapplication.data.model.ChatMessage
 import com.example.myapplication.data.model.PoiData  // ⭐ 新增：导入 PoiData
 import com.google.accompanist.permissions.*
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 // ⭐ 聊天模式枚举
 enum class ChatMode {
@@ -137,8 +140,21 @@ fun ChatScreen(
         contract = ActivityResultContracts.TakePicturePreview()
     ) { bitmap ->
         bitmap?.let {
-            // ⭐ 修改：直接传入 Bitmap，在 ViewModel 中异步压缩
-            viewModel.addPendingImageFromBitmap(it)
+            // ⭐ 修复：拍照后，把输入框的文字作为图片说明一起发送
+            val textToSend = inputText.trim()
+            if (textToSend.isNotBlank()) {
+                // 有文字：图文混发
+                viewModel.addPendingImageFromBitmap(it)
+                // ⭐ 修复：使用 GlobalScope 延迟发送
+                GlobalScope.launch(Dispatchers.Main) {
+                    delay(100)
+                    viewModel.sendAllPendingImagesWithText(textToSend)
+                }
+                inputText = ""  // 清空输入框
+            } else {
+                // 无文字：仅发送图片
+                viewModel.addPendingImageFromBitmap(it)
+            }
         }
     }
 
@@ -146,7 +162,21 @@ fun ChatScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
         uri?.let {
-            viewModel.sendImageFromUri(context, it)
+            // ⭐ 修复：选择图片后，把输入框的文字作为图片说明一起发送
+            val textToSend = inputText.trim()
+            if (textToSend.isNotBlank()) {
+                // 有文字：图文混发 - 先添加图片，然后发送（带文字）
+                viewModel.sendImageFromUri(context, it)
+                // ⭐ 修复：使用 GlobalScope 延迟发送
+                GlobalScope.launch(Dispatchers.Main) {
+                    delay(300)
+                    viewModel.sendAllPendingImagesWithText(textToSend)
+                }
+                inputText = ""  // 清空输入框
+            } else {
+                // 无文字：仅发送图片（添加到待发送列表）
+                viewModel.sendImageFromUri(context, it)
+            }
         }
     }
 
@@ -155,40 +185,50 @@ fun ChatScreen(
             audioPermissionState.launchPermissionRequest()
         }
         
-        // ⭐ 新增：进入时发送使用教程（仅首次）
+        // ⭐ 修复：仅在首次进入且没有教程消息时发送
         if (!hasSentWelcomeTutorial && chatMode == ChatMode.AGENT) {
-            hasSentWelcomeTutorial = true
-            val tutorialMessage = if (effectiveElderMode) {
-                "👴 长辈端使用指南：\n" +
-                "\n" +
-                "✅ 您可以：\n" +
-                "• 语音输入：点击🎤按钮说话\n" +
-                "• 图片识别：点击📷上传照片\n" +
-                "• 文字聊天：直接输入问题\n" +
-                "\n" +
-                "❌ 温馨提示：\n" +
-                "• 长辈端暂不支持下单叫车功能\n" +
-                "• 如需叫车，请联系您的亲友代劳\n" +
-                "\n" +
-                "💡 试试说：'附近的医院在哪里'"
-            } else {
-                "🤖 智能体助手使用指南：\n" +
-                "\n" +
-                "✅ 功能说明：\n" +
-                "• 🎤 语音输入 - 按住说话，自动识别\n" +
-                "• 📷 图片识别 - 上传照片，AI 帮您分析\n" +
-                "• 💬 智能对话 - 问路、查路线、找地点\n" +
-                "• 🚗 一键叫车 - 点击建议按钮快速下单\n" +
-                "\n" +
-                "💡 试试说：\n" +
-                "• '我要去北京站'\n" +
-                "• '附近的餐厅有哪些'\n" +
-                "• '怎么去机场'"
+            // 检查消息列表中是否已有教程消息
+            val hasTutorialMessage = messages.any { msg ->
+                msg.content.contains("使用指南") || msg.content.contains("智能体助手")
             }
             
-            // 延迟发送，确保 WebSocket 连接成功
-            kotlinx.coroutines.delay(1000)
-            viewModel.addSystemMessage(tutorialMessage)
+            if (!hasTutorialMessage) {
+                hasSentWelcomeTutorial = true
+                val tutorialMessage = if (effectiveElderMode) {
+                    "👴 长辈端使用指南：\n" +
+                    "\n" +
+                    "✅ 您可以：\n" +
+                    "• 语音输入：点击🎤按钮说话\n" +
+                    "• 图片识别：点击📷上传照片\n" +
+                    "• 文字聊天：直接输入问题\n" +
+                    "\n" +
+                    "❌ 温馨提示：\n" +
+                    "• 长辈端暂不支持下单叫车功能\n" +
+                    "• 如需叫车，请联系您的亲友代劳\n" +
+                    "\n" +
+                    "💡 试试说：'附近的医院在哪里'"
+                } else {
+                    "🤖 智能体助手使用指南：\n" +
+                    "\n" +
+                    "✅ 功能说明：\n" +
+                    "• 🎤 语音输入 - 按住说话，自动识别\n" +
+                    "• 📷 图片识别 - 上传照片，AI 帮您分析\n" +
+                    "• 💬 智能对话 - 问路、查路线、找地点\n" +
+                    "• 🚗 一键叫车 - 点击建议按钮快速下单\n" +
+                    "\n" +
+                    "💡 试试说：\n" +
+                    "• '我要去北京站'\n" +
+                    "• '附近的餐厅有哪些'\n" +
+                    "• '怎么去机场'"
+                }
+                
+                // 延迟发送，确保 WebSocket 连接成功
+                kotlinx.coroutines.delay(1000)
+                viewModel.addSystemMessage(tutorialMessage)
+            } else {
+                // 如果已有教程消息，标记为已发送
+                hasSentWelcomeTutorial = true
+            }
         }
     }
     
@@ -254,7 +294,7 @@ fun ChatScreen(
         )
     }
     
-    // ⭐ 新增：候选地点选择对话框
+    // ⭐ 候选地点选择对话框 - 表单列表形式
     if (showCandidatesDialog) {
         AlertDialog(
             onDismissRequest = { viewModel.dismissCandidatesDialog() },
@@ -269,28 +309,33 @@ fun ChatScreen(
                             modifier = Modifier.fillMaxWidth(),
                             onClick = {
                                 viewModel.selectCandidate(candidate)
-                            }
+                            },
+                            colors = CardDefaults.cardColors(
+                                containerColor = Color(0xFFF5F3FF)  // 淡紫色背景
+                            )
                         ) {
                             Column(
-                                modifier = Modifier.padding(12.dp)
+                                modifier = Modifier.padding(16.dp)
                             ) {
                                 Text(
                                     text = candidate.name,
                                     style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.primary
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF0066CC)  // 蓝色标题
                                 )
-                                Spacer(modifier = Modifier.height(4.dp))
+                                Spacer(modifier = Modifier.height(6.dp))
                                 Text(
                                     text = candidate.address ?: "未知地址",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = Color(0xFF666666)
                                 )
                                 if (candidate.distance != null) {
-                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Spacer(modifier = Modifier.height(6.dp))
                                     Text(
                                         text = "距离：${String.format("%.1f", candidate.distance / 1000)}公里",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.secondary
+                                        color = Color(0xFF1677FF),
+                                        fontWeight = FontWeight.Medium
                                     )
                                 }
                             }
@@ -555,7 +600,8 @@ fun ChatScreen(
             
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)  // ⭐ 新增：按钮间距
             ) {
                 OutlinedTextField(
                     value = inputText,
@@ -567,6 +613,19 @@ fun ChatScreen(
                     maxLines = 3,
                     minLines = 1
                 )
+
+                // ⭐ 图片上传按钮（放在最前面，确保可见）
+                IconButton(
+                    onClick = {
+                        showImagePickerDialog = true
+                    }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PhotoCamera,
+                        contentDescription = "上传图片",
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                }
 
                 IconButton(
                     onClick = {

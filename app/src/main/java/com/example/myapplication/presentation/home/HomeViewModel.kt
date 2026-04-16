@@ -186,6 +186,10 @@
         // ⭐ 新增：长辈列表加载标志（用于缓存）
         private var _elderListLoaded = false
         
+        // ⭐ 新增：checkElderMode 防抖时间戳（避免重复调用）
+        private var lastCheckElderModeTime = 0L
+        private val CHECK_ELDER_MODE_DEBOUNCE_MS = 3000L  // 3秒内只允许调用一次
+        
         // ⚠️ 已移除：_wsMessageListenerStarted，改用伴生对象的静态变量
         
         // ⭐ 高优先级2：代叫车请求通知（用于长辈端）
@@ -1309,16 +1313,16 @@
          * ⭐ 检查长辈模式并建立 WebSocket 连接
          */
         fun checkElderMode(onAuthFailure: (() -> Unit)? = null) {
-            // ⭐ 关键修复：在协程外部立即设置标记，防止并发调用
-            Log.d("HomeViewModel", "🔍 [checkElderMode入口] isCheckingElderMode=$isCheckingElderMode")
-            if (isCheckingElderMode) {
-                Log.w("HomeViewModel", "⚠️ checkElderMode 正在执行中，跳过重复调用")
+            // ⭐ 新增：防抖机制，3秒内只允许调用一次
+            val currentTime = System.currentTimeMillis()
+            if (currentTime - lastCheckElderModeTime < CHECK_ELDER_MODE_DEBOUNCE_MS) {
+                Log.d("HomeViewModel", "⏭️ checkElderMode 被频繁调用，跳过（距离上次调用仅 ${currentTime - lastCheckElderModeTime}ms）")
                 return
             }
+            lastCheckElderModeTime = currentTime
             
-            // ⭐ 立即设置标记（在 launch 之前）
-            isCheckingElderMode = true
-            Log.d("HomeViewModel", "🔒 已设置 isCheckingElderMode = true")
+            // ⭐ 修复：移除防重复调用逻辑，允许每次调用都执行
+            Log.d("HomeViewModel", "🔍 [checkElderMode入口] 开始执行")
             
             Log.d("HomeViewModel", "🚀 [checkElderMode] 即将启动 viewModelScope.launch...")
             viewModelScope.launch {
@@ -1399,18 +1403,9 @@
                         startIndependentLocation()
                         loadGuardianInfo()
                         
-                        // ⭐ 关键修复：长辈端必须使用自己的 userId 重新连接 WebSocket
-                        val currentUserId = tokenManager.getUserId()
-                        if (currentUserId != null && webSocketClient.isConnected()) {
-                            Log.d("HomeViewModel", "🔌 长辈端检测到 WebSocket 已连接，检查是否需要重连...")
-                            // TODO: 需要检查当前 WebSocket 连接的 userId 是否匹配
-                            // 暂时先断开重连，确保使用正确的 userId
-                            Log.d("HomeViewModel", "⚠️ 断开旧连接，准备用 userId=$currentUserId 重新连接")
-                            webSocketClient.disconnect()
-                            kotlinx.coroutines.delay(500)  // 等待断开完成
-                            isConnectingWebSocket = false  // 重置标记
-                            connectWebSocketForElderMode()
-                        } else if (!webSocketClient.isConnected() && !isConnectingWebSocket) {
+                        // ⭐ 修复：移除不必要的断开重连逻辑
+                        // WebSocket 已经在上面连接成功(sessionId=user_19)，不需要再重连
+                        if (!webSocketClient.isConnected() && !isConnectingWebSocket) {
                             Log.d("HomeViewModel", "🔌 WebSocket 未连接，开始连接...")
                             isConnectingWebSocket = true
                             try {
@@ -1419,6 +1414,11 @@
                                 kotlinx.coroutines.delay(2000)
                                 isConnectingWebSocket = false
                             }
+                        } else if (webSocketClient.isConnected()) {
+                            val userId = tokenManager.getUserId()
+                            Log.d("HomeViewModel", "✅ WebSocket 已连接，sessionId=user_$userId")
+                        } else {
+                            Log.d("HomeViewModel", "⏳ WebSocket 正在连接中，跳过")
                         }
                     } else {
                         // 普通模式：加载长辈列表（用于帮长辈叫车）
@@ -1449,9 +1449,8 @@
                         Log.w("HomeViewModel", "⚠️ 网络异常，使用本地缓存的长辈模式：${_isElderMode.value}")
                     }
                 } finally {
-                    // ⭐ 关键修复：无论成功还是失败，都要重置标志
-                    isCheckingElderMode = false
-                    Log.d("HomeViewModel", "✅ checkElderMode 执行完成，重置标志")
+                    // ⭐ 修复：移除标志重置逻辑（已删除防重复调用）
+                    Log.d("HomeViewModel", "✅ checkElderMode 执行完成")
                     Log.d("HomeViewModel", "📊 最终状态：isElderMode=${_isElderMode.value}, isProfileLoaded=${_isProfileLoaded.value}")
                     Log.d("HomeViewModel", "📊 WebSocket 连接状态：${webSocketClient.isConnected()}")
                 }

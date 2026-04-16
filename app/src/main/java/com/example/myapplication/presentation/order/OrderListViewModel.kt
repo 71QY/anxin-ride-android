@@ -45,8 +45,9 @@ class OrderListViewModel @Inject constructor(
     /**
      * 加载订单列表
      * @param loadMore 是否加载更多（上拉分页）
+     * @param isElderMode 是否为长辈模式（长辈不加载代叫订单）
      */
-    fun loadOrders(loadMore: Boolean = false) {
+    fun loadOrders(loadMore: Boolean = false, isElderMode: Boolean = false) {
         if (_isLoading.value) return
         if (loadMore && !hasMore) return
 
@@ -62,9 +63,9 @@ class OrderListViewModel @Inject constructor(
                     return@launch
                 }
                 
-                Log.d("OrderListViewModel", "📦 开始加载订单列表，userId=$userId")
+                Log.d("OrderListViewModel", "📦 开始加载订单列表，userId=$userId, isElderMode=$isElderMode")
                 
-                // ⭐ 新增：同时加载普通订单和代叫订单
+                // ⭐ 新增：同时加载普通订单和代叫订单（长辈模式跳过代叫订单）
                 val page = if (loadMore) currentPage + 1 else 1
                 
                 // 1. 加载普通订单
@@ -83,13 +84,18 @@ class OrderListViewModel @Inject constructor(
                     emptyList()
                 }
                 
-                // 2. 加载代叫订单（亲友查看为长辈叫的订单）
-                val proxyResult = apiService.getProxyOrders(userId)
-                val proxyOrders = if (proxyResult.isSuccess() && proxyResult.data != null) {
-                    Log.d("OrderListViewModel", "✅ 加载代叫订单成功，数量=${proxyResult.data!!.size}")
-                    proxyResult.data!!
+                // 2. 加载代叫订单（仅普通账户，长辈账户跳过此步骤避免 403）
+                val proxyOrders = if (!isElderMode) {
+                    val proxyResult = apiService.getProxyOrders(userId)
+                    if (proxyResult.isSuccess() && proxyResult.data != null) {
+                        Log.d("OrderListViewModel", "✅ 加载代叫订单成功，数量=${proxyResult.data!!.size}")
+                        proxyResult.data!!
+                    } else {
+                        Log.w("OrderListViewModel", "⚠️ 加载代叫订单失败：${proxyResult.message}")
+                        emptyList()
+                    }
                 } else {
-                    Log.w("OrderListViewModel", "⚠️ 加载代叫订单失败：${proxyResult.message}")
+                    Log.d("OrderListViewModel", "⚠️ 长辈模式，跳过加载代叫订单")
                     emptyList()
                 }
                 

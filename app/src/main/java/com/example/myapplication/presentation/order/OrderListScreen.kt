@@ -16,15 +16,26 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.myapplication.data.model.Order
+import com.example.myapplication.presentation.profile.ProfileViewModel  // ⭐ 新增：导入 ProfileViewModel
 
 @Composable
 fun OrderListScreen(
     viewModel: OrderListViewModel = hiltViewModel(),
+    profileViewModel: ProfileViewModel = hiltViewModel(),  // ⭐ 新增：注入 ProfileViewModel
     onOrderClick: (Long) -> Unit
 ) {
     val orders by viewModel.orders.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
+    
+    // ⭐ 新增：获取长辈模式状态
+    val profile by profileViewModel.profile.collectAsStateWithLifecycle()
+    val isElderMode = profile?.guardMode == 1
+    
+    // ⭐ 新增：根据长辈模式加载订单
+    LaunchedEffect(isElderMode) {
+        viewModel.loadOrders(loadMore = false, isElderMode = isElderMode)
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(

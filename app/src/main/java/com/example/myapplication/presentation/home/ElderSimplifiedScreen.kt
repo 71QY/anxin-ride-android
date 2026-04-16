@@ -152,15 +152,20 @@ fun ElderSimplifiedScreen(
         Log.d("ElderSimplifiedScreen", "📍 当前位置: lat=${currentLocation?.latitude}, lng=${currentLocation?.longitude}")
         
         // ⭐ 关键修复：确保 WebSocket 连接（代叫车推送需要）
-        Log.d("ElderSimplifiedScreen", "🔌 检查 WebSocket 连接状态...")
+        Log.d("ElderSimplifiedScreen", "🔌 ========== 开始调用 checkElderMode ==========")
         Log.d("ElderSimplifiedScreen", "🚀 即将调用 viewModel.checkElderMode()")
-        viewModel.checkElderMode(
-            onAuthFailure = {
-                Log.w("ElderSimplifiedScreen", "⚠️ Token已失效，触发退出登录")
-                onLogout()
-            }
-        )
-        Log.d("ElderSimplifiedScreen", "✅ viewModel.checkElderMode() 调用完成")
+        try {
+            viewModel.checkElderMode(
+                onAuthFailure = {
+                    Log.w("ElderSimplifiedScreen", "⚠️ Token已失效，触发退出登录")
+                    onLogout()
+                }
+            )
+            Log.d("ElderSimplifiedScreen", "✅ viewModel.checkElderMode() 调用完成（无异常）")
+        } catch (e: Exception) {
+            Log.e("ElderSimplifiedScreen", "❌ checkElderMode 调用异常: ${e.message}", e)
+        }
+        Log.d("ElderSimplifiedScreen", "🔌 ========== checkElderMode 调用结束 ==========")
         
         if (locationPermissionState.status != PermissionStatus.Granted) {
             Log.w("ElderSimplifiedScreen", "⚠️ 权限未授予，请求权限...")
