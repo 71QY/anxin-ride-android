@@ -175,13 +175,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                     }
                                 },
-                                onNavigateToChat = {
-                                    navController.navigate("chat") {
-                                        popUpTo("main") {
-                                            inclusive = false
-                                        }
-                                    }
-                                }
+                                onNavigateToChat = {}  // ⭐ 修复：空实现，实际导航由 MyApplicationApp 内部管理
                             )
                         }
                         composable("order_detail/{orderId}") { backStackEntry ->
@@ -215,24 +209,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                         }
-                        composable("chat") {
-                            val isElderMode by homeViewModel.isElderMode.collectAsStateWithLifecycle()  // ⭐ 新增：获取长辈模式状态
-                            
-                            ChatScreen(
-                                viewModel = chatViewModel,
-                                onNavigateToOrder = { orderId: Long ->
-                                    if (orderId == -1L) {
-                                        // ⭐ 修复：从智能体对话返回应该回到 main 页面（首页）
-                                        navController.popBackStack("main", inclusive = false)
-                                    } else {
-                                        // ⭐ 修改：跳转到订单追踪页面（实时显示司机位置、路线）
-                                        navController.navigate("order_tracking/$orderId")
-                                    }
-                                },
-                                chatMode = ChatMode.AGENT,
-                                isElderMode = isElderMode  // ⭐ 新增：传递长辈模式标识
-                            )
-                        }
+                        // ⭐ 注意：chat 路由已移到 MyApplicationApp 内部管理，此处不再重复定义
                         composable("agent_chat") {
                             ChatListScreen(
                                 onBackClick = { navController.popBackStack() },
@@ -310,10 +287,17 @@ fun MyApplicationApp(
     navController: NavHostController,  // ⭐ 新增：传入 navController
     onNavigateToOrderDetail: (Long) -> Unit = {},
     onNavigateToOrderList: () -> Unit = {},
-    onNavigateToChat: () -> Unit = {}
+    onNavigateToChat: () -> Unit = {},
+    onBackToHome: (() -> Unit)? = null  // ⭐ 新增：返回主页回调
 ) {
     var currentDestination by rememberSaveable { mutableStateOf<String?>("home") }
     val context = LocalContext.current
+    
+    // ⭐ 新增：返回主页的回调函数（本地定义）
+    val localOnBackToHome = {
+        Log.d("MyApplicationApp", "⬅️ 返回主页")
+        currentDestination = "home"
+    }
     
     LaunchedEffect(currentDestination) {
         if (currentDestination == "home") {
@@ -422,7 +406,11 @@ fun MyApplicationApp(
                             // ⭐ 修改：跳转到订单追踪页面（实时显示司机位置、路线）
                             navController.navigate("order_tracking/$orderId")
                         },
-                        onNavigateToChat = onNavigateToChat,
+                        onNavigateToChat = {
+                            // ⭐ 修复：切换到 chat 标签页
+                            Log.d("MyApplicationApp", "🤖 点击智能体按钮，切换到聊天标签页")
+                            currentDestination = "chat"
+                        },
                         onNavigateToOrderTracking = { orderId ->
                             // ⭐ 新增：跳转到行程追踪页面
                             Log.d("MainActivity", "🚀 收到跳转事件，前往行程追踪: orderId=$orderId")
@@ -498,7 +486,12 @@ fun MyApplicationApp(
                             // ⭐ 修改：跳转到订单追踪页面（实时显示司机位置、路线）
                             navController.navigate("order_tracking/$orderId")
                         },
-                        chatMode = ChatMode.AGENT
+                        chatMode = ChatMode.AGENT,
+                        showBackButton = true,  // ⭐ 新增：显示返回按钮
+                        onBackClick = { 
+                            // ⭐ 修复：从智能体助手返回到聊天列表页
+                            currentDestination = "chat"
+                        }
                     )
                 }
                 "profile" -> {
@@ -538,7 +531,11 @@ fun MyApplicationApp(
                             // ⭐ 修改：跳转到订单追踪页面（实时显示司机位置、路线）
                             navController.navigate("order_tracking/$orderId")
                         },
-                        onNavigateToChat = onNavigateToChat,
+                        onNavigateToChat = {
+                            // ⭐ 修复：切换到 chat 标签页
+                            Log.d("MyApplicationApp", "🤖 点击智能体按钮，切换到聊天标签页")
+                            currentDestination = "chat"
+                        },
                         onNavigateToOrderTracking = { orderId ->
                             // ⭐ 新增：跳转到行程追踪页面
                             Log.d("MainActivity", "🚀 收到跳转事件，前往行程追踪: orderId=$orderId")

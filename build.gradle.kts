@@ -20,7 +20,10 @@ subprojects {
             jvmTarget = "17"
             freeCompilerArgs += listOf(
                 "-opt-in=kotlin.RequiresOptIn",
-                "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api"
+                "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
+                // ⭐ 新增：防止 VerifyError 的编译器参数
+                "-Xskip-prerelease-check",           // 跳过预发布检查
+                "-Xallow-unstable-dependencies"       // 允许不稳定的依赖
             )
         }
     }

@@ -8,6 +8,7 @@ import com.example.myapplication.data.model.EmergencyContact
 import com.example.myapplication.data.model.LoginRequest
 import com.example.myapplication.data.model.LoginResponse
 import com.example.myapplication.data.model.Order
+import com.example.myapplication.data.model.ConfirmDriverRequest  // ⭐ 新增：确认司机接单请求
 import com.example.myapplication.data.model.PageResponse
 import com.example.myapplication.data.model.PoiResponse
 import com.example.myapplication.data.model.RealNameRequest
@@ -185,6 +186,12 @@ interface ApiService {
 
     @POST("order/{id}/confirm")
     suspend fun confirmOrder(@Path("id") orderId: Long): Result<Unit>
+
+    // ⭐ 新增：确认/拒绝司机接单
+    @POST("order/driver/confirm")
+    suspend fun confirmDriverAcceptance(
+        @Body request: ConfirmDriverRequest
+    ): Result<Unit>
 
     @GET("order/list")
     suspend fun getOrderList(

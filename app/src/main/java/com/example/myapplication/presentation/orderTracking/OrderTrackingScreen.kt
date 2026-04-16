@@ -22,8 +22,12 @@ import androidx.compose.material.icons.filled.CarCrash
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Person  // ⭐ 新增：司机图标
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Info  // ⭐ 新增：信息图标
+import androidx.compose.material.icons.filled.Check  // ⭐ 新增：确认图标
+import androidx.compose.material.icons.filled.Close  // ⭐ 新增：关闭图标
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -61,7 +65,13 @@ fun OrderTrackingScreen(
     // ⭐ 修复：在 Composable 顶层创建 scope
     val scope = rememberCoroutineScope()
     
-    // ⭐ 新增：监听事件（代叫车确认提示）
+    // ⭐ 新增：取消订单确认对话框状态
+    var showCancelConfirmDialog by remember { mutableStateOf(false) }
+    
+    // ⭐ 新增：司机接单确认对话框状态（必须在 LaunchedEffect 之前定义）
+    var showDriverAcceptDialog by remember { mutableStateOf<com.example.myapplication.data.model.WsMessage?>(null) }
+    
+    // ⭐ 新增：监听事件（代叫车确认提示 + 司机接单请求）
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
@@ -76,6 +86,13 @@ fun OrderTrackingScreen(
                         onBackClick()
                     }
                 }
+                is OrderTrackingEvent.DriverRequestReceived -> {
+                    // ⭐ 显示司机接单确认弹窗
+                    showDriverAcceptDialog = event.wsMessage
+                }
+                is OrderTrackingEvent.DriverRejected -> {
+                    Toast.makeText(context, "⚠️ ${event.message}", Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
@@ -83,6 +100,8 @@ fun OrderTrackingScreen(
     // 地图相关
     var aMap by remember { mutableStateOf<AMap?>(null) }
     var driverMarker by remember { mutableStateOf<com.amap.api.maps.model.Marker?>(null) }
+    var startMarker by remember { mutableStateOf<com.amap.api.maps.model.Marker?>(null) }  // ⭐ 新增：起点标记
+    var endMarker by remember { mutableStateOf<com.amap.api.maps.model.Marker?>(null) }  // ⭐ 新增：终点标记
     var routePolyline by remember { mutableStateOf<com.amap.api.maps.model.Polyline?>(null) }
 
     // 初始化追踪
@@ -95,49 +114,93 @@ fun OrderTrackingScreen(
         driverLocation?.let { location ->
             aMap?.let { map ->
                 if (driverMarker == null) {
-                    // 创建司机标记
+                    // ⭐ 创建司机标记 - 使用蓝色小车图标
+                    android.util.Log.d("OrderTrackingScreen", "🚕 创建司机标记：lat=${location.latitude}, lng=${location.longitude}")
+                    
                     driverMarker = map.addMarker(
                         MarkerOptions()
                             .position(location)
                             .icon(BitmapDescriptorFactory.fromResource(
-                                android.R.drawable.ic_menu_mylocation  // 使用系统图标，可替换为自定义小车图标
+                                android.R.drawable.ic_menu_directions  // ⭐ 使用方向图标，更像小车
                             ))
                             .title("司机位置")
+                            .snippet("正在赶来中")
                     )
+                    android.util.Log.d("OrderTrackingScreen", "✅ 司机标记创建成功")
                 } else {
                     // 平滑移动标记（2.5秒动画）
+                    android.util.Log.d("OrderTrackingScreen", "🚕 司机位置更新：lat=${location.latitude}, lng=${location.longitude}")
                     animateMarkerSmoothly(driverMarker!!, location, durationMs = 2500)
                 }
                 
                 // 移动相机到司机位置
                 map.animateCamera(CameraUpdateFactory.newLatLngZoom(location, 16f))
             }
+        } ?: run {
+            android.util.Log.w("OrderTrackingScreen", "⚠️ driverLocation 为 null")
         }
     }
 
-    // 绘制路线
+    // 绘制路线和标记
     LaunchedEffect(uiState) {
         if (uiState is OrderTrackingUiState.Success) {
             val order = (uiState as OrderTrackingUiState.Success).order
             aMap?.let { map ->
-                // 清除旧路线
+                // 清除旧路线和标记
                 routePolyline?.remove()
+                startMarker?.remove()
+                endMarker?.remove()
                 
-                // 如果有起点和终点坐标，绘制路线
-                val startLat = order.startLat ?: order.destLat
-                val startLng = order.startLng ?: order.destLng
+                // ⭐ 修复：如果有起点和终点坐标，绘制路线
+                val startLat = order.startLat
+                val startLng = order.startLng
                 val destLat = order.destLat
                 val destLng = order.destLng
                 
                 if (startLat != null && startLng != null && destLat != null && destLng != null) {
+                    android.util.Log.d("OrderTrackingScreen", "🗺️ 开始绘制路线：起点($startLat, $startLng) → 终点($destLat, $destLng)")
+                    
+                    // ⭐ 绘制蓝色路线
                     val polyline = map.addPolyline(
                         PolylineOptions()
                             .add(LatLng(startLat, startLng))
                             .add(LatLng(destLat, destLng))
-                            .color(Color(0xFF3366FF).hashCode())
-                            .width(8f)
+                            .color(android.graphics.Color.parseColor("#3366FF"))  // ⭐ 修复：使用正确的蓝色
+                            .width(10f)  // ⭐ 增加线宽，更明显
+                            .geodesic(true)  // ⭐ 使用大地曲线，更真实
                     )
                     routePolyline = polyline
+                    android.util.Log.d("OrderTrackingScreen", "✅ 路线绘制成功")
+                    
+                    // ⭐ 添加起点标记（绿色）
+                    startMarker = map.addMarker(
+                        MarkerOptions()
+                            .position(LatLng(startLat, startLng))
+                            .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN))
+                            .title("上车点")
+                            .snippet(order.poiName ?: order.destAddress ?: "起点")
+                    )
+                    android.util.Log.d("OrderTrackingScreen", "✅ 起点标记添加成功")
+                    
+                    // ⭐ 添加终点标记（红色）
+                    endMarker = map.addMarker(
+                        MarkerOptions()
+                            .position(LatLng(destLat, destLng))
+                            .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED))
+                            .title("目的地")
+                            .snippet(order.poiName ?: order.destAddress ?: "终点")
+                    )
+                    android.util.Log.d("OrderTrackingScreen", "✅ 终点标记添加成功")
+                    
+                    // ⭐ 调整地图视野，显示完整路线
+                    val bounds = com.amap.api.maps.model.LatLngBounds.builder()
+                        .include(LatLng(startLat, startLng))
+                        .include(LatLng(destLat, destLng))
+                        .build()
+                    map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, 100))
+                    
+                } else {
+                    android.util.Log.w("OrderTrackingScreen", "⚠️ 缺少坐标信息，无法绘制路线：startLat=$startLat, startLng=$startLng, destLat=$destLat, destLng=$destLng")
                 }
             }
         }
@@ -202,26 +265,201 @@ fun OrderTrackingScreen(
                             callDriver(context, state.order.driverPhone)
                         },
                         onCancelOrder = {
-                            // ⭐ 修复：使用顶层创建的 scope
-                            scope.launch {
-                                try {
-                                    val result = viewModel.cancelOrder(orderId)
-                                    if (result) {
-                                        Toast.makeText(context, "订单已取消", Toast.LENGTH_SHORT).show()
-                                        // 可选：返回上一页
-                                        onBackClick()
-                                    } else {
-                                        Toast.makeText(context, "取消失败，请稍后重试", Toast.LENGTH_SHORT).show()
-                                    }
-                                } catch (e: Exception) {
-                                    Toast.makeText(context, "取消订单异常：${e.message}", Toast.LENGTH_LONG).show()
-                                }
-                            }
+                            // ⭐ 修复：显示确认对话框
+                            showCancelConfirmDialog = true
                         }
                     )
                 }
             }
         }
+    }
+    
+    // ⭐ 新增：取消订单确认对话框
+    if (showCancelConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showCancelConfirmDialog = false },
+            title = { Text("确认取消订单") },
+            text = { Text("确定要取消这个订单吗？取消后无法恢复。") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCancelConfirmDialog = false
+                        scope.launch {
+                            try {
+                                val result = viewModel.cancelOrder(orderId)
+                                if (result) {
+                                    Toast.makeText(context, "✅ 订单已取消", Toast.LENGTH_SHORT).show()
+                                    // 延迟返回上一页
+                                    kotlinx.coroutines.delay(1000)
+                                    onBackClick()
+                                } else {
+                                    Toast.makeText(context, "❌ 取消失败，请稍后重试", Toast.LENGTH_SHORT).show()
+                                }
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "❌ 取消订单异常：${e.message}", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                ) {
+                    Text("确认取消")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCancelConfirmDialog = false }) {
+                    Text("我再想想")
+                }
+            }
+        )
+    }
+    
+    // ⭐ 新增：司机接单确认对话框
+    showDriverAcceptDialog?.let { wsMessage ->
+        AlertDialog(
+            onDismissRequest = { },  // ⭐ 禁止点击外部关闭，必须选择同意或拒绝
+            title = { 
+                Text(
+                    text = "🚕 有司机接单",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold
+                ) 
+            },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.padding(vertical = 8.dp)
+                ) {
+                    Text(
+                        text = wsMessage.message ?: "是否允许该司机接单？",
+                        fontSize = 16.sp,
+                        color = Color(0xFF333333)
+                    )
+                    
+                    Divider()
+                    
+                    // 司机信息
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.Person,
+                                contentDescription = null,
+                                tint = Color(0xFF1677FF),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "司机：${wsMessage.driverName ?: "未知"}",
+                                fontSize = 15.sp
+                            )
+                        }
+                        
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.DirectionsCar,
+                                contentDescription = null,
+                                tint = Color(0xFF1677FF),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "车牌：${wsMessage.carNo ?: "未知"}",
+                                fontSize = 15.sp
+                            )
+                        }
+                        
+                        if (wsMessage.carType != null || wsMessage.carColor != null) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.Info,
+                                    contentDescription = null,
+                                    tint = Color(0xFF1677FF),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "车辆：${wsMessage.carColor ?: ""} ${wsMessage.carType ?: ""}",
+                                    fontSize = 15.sp
+                                )
+                            }
+                        }
+                        
+                        if (wsMessage.rating != null) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.Star,
+                                    contentDescription = null,
+                                    tint = Color(0xFFFFC107),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "评分：${String.format("%.1f", wsMessage.rating)}",
+                                    fontSize = 15.sp
+                                )
+                            }
+                        }
+                        
+                        if (wsMessage.driverPhone != null) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.Phone,
+                                    contentDescription = null,
+                                    tint = Color(0xFF4CAF50),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "电话：${wsMessage.driverPhone}",
+                                    fontSize = 15.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDriverAcceptDialog = null
+                        scope.launch {
+                            val result = viewModel.confirmDriverAcceptance(orderId, true)
+                            if (result) {
+                                Toast.makeText(context, "✅ 已同意司机接单", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "❌ 操作失败", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
+                ) {
+                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("同意")
+                }
+            },
+            dismissButton = {
+                Button(
+                    onClick = {
+                        showDriverAcceptDialog = null
+                        scope.launch {
+                            val result = viewModel.confirmDriverAcceptance(orderId, false)
+                            if (result) {
+                                Toast.makeText(context, "⚠️ 已拒绝，正在重新派单...", Toast.LENGTH_LONG).show()
+                            } else {
+                                Toast.makeText(context, "❌ 操作失败", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF44336))
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("拒绝")
+                }
+            }
+        )
     }
 }
 
@@ -286,7 +524,7 @@ private fun OrderTrackingContent(
 
                 // 操作按钮
                 ActionButtons(
-                    canCancel = order.status <= 1,
+                    canCancel = order.status <= 2,  // ⭐ 修复：允许在司机接单前取消（状态0-2）
                     onCancelOrder = onCancelOrder,
                     onCallDriver = onCallDriver
                 )

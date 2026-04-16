@@ -675,35 +675,50 @@ class ChatViewModel @Inject constructor(
                 }
             }
             
+            // ⭐ 修复：先复制图片列表，避免 ConcurrentModificationException
+            val imagesCopy = _pendingImages.toList()
+            
             // 构建多图片请求（对齐后端文档 1.2.2）
             val imageRequest = JSONObject().apply {
                 put("type", "image")
                 put("sessionId", sessionId.value)
-                put("imageBase64", _pendingImages[0])  // 主图片
+                put("imageBase64", imagesCopy[0])  // 主图片
                 
-                if (_pendingImages.size > 1) {
+                if (imagesCopy.size > 1) {
                     // 额外图片数组
                     val additionalImages = JSONArray()
-                    for (i in 1 until _pendingImages.size) {
-                        additionalImages.put(_pendingImages[i])
+                    for (i in 1 until imagesCopy.size) {
+                        additionalImages.put(imagesCopy[i])
                     }
                     put("additionalImages", additionalImages)
-                    put("imageCount", _pendingImages.size)
+                    put("imageCount", imagesCopy.size)
                 } else {
                     put("imageCount", 1)
                 }
                 
                 put("lat", currentLat!!)
                 put("lng", currentLng!!)
+                
+                // ⭐ 新增：如果有文字说明，添加到请求中
+                if (!text.isNullOrBlank()) {
+                    put("content", text)
+                }
             }
             
-            Log.d("ChatViewModel", "发送多图片 WebSocket 消息：type=image, count=${_pendingImages.size}")
+            Log.d("ChatViewModel", "发送多图片 WebSocket 消息：type=image, count=${imagesCopy.size}")
             
             // ⭐ 显示用户发送的图片消息（支持多张 + 文字说明）
             val content = if (!text.isNullOrBlank()) {
-                "$text\n📷 [${_pendingImages.size}张图片]"
+                "$text\n📷 [${imagesCopy.size}张图片]"
             } else {
-                "📷 [${_pendingImages.size}张图片]"
+                "📷 [${imagesCopy.size}张图片]"
+            }
+            
+            // ⭐ 修复：使用复制的列表，而不是 subList
+            val additionalImagesCopy = if (imagesCopy.size > 1) {
+                imagesCopy.subList(1, imagesCopy.size).toList()  // 转为普通 List
+            } else {
+                null
             }
             
             val imageMessage = ChatMessage(
@@ -711,8 +726,8 @@ class ChatViewModel @Inject constructor(
                 content = content,
                 isUser = true,
                 timestamp = System.currentTimeMillis(),
-                imageBase64 = _pendingImages[0],  // 主图
-                additionalImages = if (_pendingImages.size > 1) _pendingImages.subList(1, _pendingImages.size) else null  // ⭐ 额外图片
+                imageBase64 = imagesCopy[0],  // 主图
+                additionalImages = additionalImagesCopy  // ⭐ 额外图片（已复制）
             )
             _messages.value += imageMessage
             

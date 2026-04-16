@@ -24,7 +24,8 @@ import javax.inject.Inject
 @HiltViewModel
 class OrderTrackingViewModel @Inject constructor(
     private val orderRepository: OrderRepository,
-    private val webSocketClient: ChatWebSocketClient
+    private val webSocketClient: ChatWebSocketClient,
+    private val tokenManager: com.example.myapplication.core.datastore.TokenManager
 ) : ViewModel() {
 
     // ==================== UI State ====================
@@ -87,9 +88,29 @@ class OrderTrackingViewModel @Inject constructor(
         
         wsJob = viewModelScope.launch {
             try {
-                // 注意：这里假设已经建立了 WebSocket 连接
-                // 如果没有连接，需要在调用此方法前确保已连接
+                // ⭐ 修复：检查 WebSocket 是否已连接，如果没有则先连接
+                if (!webSocketClient.isConnected()) {
+                    Log.d("OrderTrackingVM", "🔌 WebSocket 未连接，开始连接...")
+                    val userId = tokenManager.getUserId()
+                    val token = tokenManager.getToken()
+                    
+                    if (userId != null && !token.isNullOrBlank()) {
+                        val wsSessionId = "user_$userId"
+                        webSocketClient.connect(wsSessionId, token)
+                        Log.d("OrderTrackingVM", "✅ WebSocket 连接请求已发送")
+                        
+                        // 等待连接建立
+                        kotlinx.coroutines.delay(1000)
+                    } else {
+                        Log.e("OrderTrackingVM", "❌ 无法连接 WebSocket：userId 或 token 为空")
+                        return@launch
+                    }
+                } else {
+                    Log.d("OrderTrackingVM", "✅ WebSocket 已连接")
+                }
                 
+                // 开始监听消息
+                Log.d("OrderTrackingVM", "🚀 开始监听 WebSocket 消息流...")
                 webSocketClient.messages.collect { message ->
                     try {
                         val wsMessage = Json.decodeFromString<WsMessage>(message)
@@ -114,9 +135,19 @@ class OrderTrackingViewModel @Inject constructor(
         }
 
         when (wsMessage.type) {
+            WsMessage.TYPE_DRIVER_REQUEST -> {  // ⭐ 新增：司机接单请求
+                Log.d("OrderTrackingVM", "🚕 收到 DRIVER_REQUEST")
+                handleDriverRequest(wsMessage)
+            }
+            
             WsMessage.TYPE_ORDER_ACCEPTED -> {
                 Log.d("OrderTrackingVM", "🚕 收到 ORDER_ACCEPTED")
                 handleOrderAccepted(wsMessage)
+            }
+            
+            WsMessage.TYPE_DRIVER_REJECTED -> {  // ⭐ 新增：用户拒绝接单
+                Log.d("OrderTrackingVM", "❌ 收到 DRIVER_REJECTED")
+                handleDriverRejected(wsMessage)
             }
             
             WsMessage.TYPE_DRIVER_LOCATION -> {
@@ -130,8 +161,9 @@ class OrderTrackingViewModel @Inject constructor(
             }
             
             WsMessage.TYPE_ORDER_CREATED -> {
-                Log.d("OrderTrackingVM", "📦 收到 ORDER_CREATED（代叫车）")
-                handleOrderCreated(wsMessage)
+                Log.d("OrderTrackingVM", "📦 收到 ORDER_CREATED（代叫车）- 忽略，由 HomeViewModel 处理")
+                // ⭐ 修复：不在此处处理，避免与 HomeViewModel 冲突
+                // handleOrderCreated(wsMessage) 已移除
             }
             
             WsMessage.TYPE_PROXY_ORDER_CONFIRMED -> {
@@ -141,6 +173,47 @@ class OrderTrackingViewModel @Inject constructor(
             
             else -> {
                 Log.d("OrderTrackingVM", "ℹ️ 忽略消息类型: ${wsMessage.type}")
+            }
+        }
+    }
+
+    /**
+     * ⭐ 新增：处理司机接单请求（弹窗确认）
+     */
+    private fun handleDriverRequest(wsMessage: WsMessage) {
+        viewModelScope.launch(Dispatchers.Main) {
+            Log.d("OrderTrackingVM", "🚕 收到 DRIVER_REQUEST，显示确认弹窗")
+            // 触发事件，让UI显示确认弹窗
+            _events.emit(OrderTrackingEvent.DriverRequestReceived(wsMessage))
+        }
+    }
+    
+    /**
+     * ⭐ 新增：处理用户拒绝接单
+     */
+    private fun handleDriverRejected(wsMessage: WsMessage) {
+        viewModelScope.launch(Dispatchers.Main) {
+            val currentState = _uiState.value
+            if (currentState is OrderTrackingUiState.Success) {
+                // 清空司机信息，订单状态回到待确认
+                val updatedOrder = currentState.order.copy(
+                    driverName = null,
+                    driverPhone = null,
+                    driverAvatar = null,
+                    carNo = null,
+                    carType = null,
+                    carColor = null,
+                    rating = null,
+                    status = 0,  // 回到待确认状态
+                    driverLat = null,
+                    driverLng = null
+                )
+                
+                _uiState.value = OrderTrackingUiState.Success(updatedOrder)
+                _driverLocation.value = null
+                
+                // 显示提示
+                _events.emit(OrderTrackingEvent.DriverRejected("您已拒绝该司机，正在为您重新派单"))
             }
         }
     }
@@ -215,47 +288,6 @@ class OrderTrackingViewModel @Inject constructor(
     }
 
     /**
-     * 处理代叫车创建消息
-     */
-    private fun handleOrderCreated(wsMessage: WsMessage) {
-        viewModelScope.launch(Dispatchers.Main) {
-            wsMessage.data?.let { data ->
-                val tempOrder = Order(
-                    id = data.orderId ?: 0L,
-                    orderNo = data.orderNo ?: "",
-                    userId = data.userId,
-                    driverId = null,
-                    guardianUserId = data.guardianUserId,
-                    destLat = data.destLat,
-                    destLng = data.destLng,
-                    poiName = data.poiName,
-                    destAddress = data.destAddress,
-                    platformUsed = null,
-                    platformOrderId = null,
-                    estimatePrice = data.estimatePrice,
-                    actualPrice = null,
-                    createTime = data.createTime ?: "",
-                    status = data.status ?: 0,
-                    driverName = null,
-                    driverPhone = null,
-                    driverAvatar = null,
-                    carNo = null,
-                    carType = null,
-                    carColor = null,
-                    rating = null,
-                    eta = null,
-                    startLat = null,
-                    startLng = null,
-                    driverLat = null,
-                    driverLng = null
-                )
-                
-                _uiState.value = OrderTrackingUiState.Success(tempOrder)
-            }
-        }
-    }
-
-    /**
      * ⭐ 新增：处理代叫车确认结果（亲友端接收）
      */
     private fun handleProxyOrderConfirmed(wsMessage: WsMessage) {
@@ -318,6 +350,31 @@ class OrderTrackingViewModel @Inject constructor(
             false
         }
     }
+    
+    /**
+     * ⭐ 新增：确认/拒绝司机接单
+     */
+    suspend fun confirmDriverAcceptance(orderId: Long, accepted: Boolean): Boolean {
+        return try {
+            val apiService = com.example.myapplication.core.network.RetrofitClient.instance
+            val request = com.example.myapplication.data.model.ConfirmDriverRequest(
+                orderId = orderId,
+                accepted = accepted
+            )
+            
+            val result = apiService.confirmDriverAcceptance(request)
+            if (result.isSuccess()) {
+                Log.d("OrderTrackingVM", "✅ 司机接单${if (accepted) "已同意" else "已拒绝"}")
+                true
+            } else {
+                Log.e("OrderTrackingVM", "❌ 确认失败: ${result.message}")
+                false
+            }
+        } catch (e: Exception) {
+            Log.e("OrderTrackingVM", "❌ 确认异常", e)
+            false
+        }
+    }
 
     /**
      * 清理资源
@@ -348,4 +405,14 @@ sealed class OrderTrackingEvent {
      * @param rejectReason 拒绝原因
      */
     data class ProxyOrderConfirmed(val confirmed: Boolean, val rejectReason: String?) : OrderTrackingEvent()
+    
+    /**
+     * ⭐ 新增：收到司机接单请求（需要弹窗确认）
+     */
+    data class DriverRequestReceived(val wsMessage: com.example.myapplication.data.model.WsMessage) : OrderTrackingEvent()
+    
+    /**
+     * ⭐ 新增：用户拒绝司机接单
+     */
+    data class DriverRejected(val message: String) : OrderTrackingEvent()
 }

@@ -147,3 +147,6 @@ kapt {
         option("-Xmaxerrs", "500")
     }
 }
+
+// ⚠️ 已移除：KotlinCompile 配置，由根目录 build.gradle.kts 统一管理
+// 避免配置冲突导致 VerifyError

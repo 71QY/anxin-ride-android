@@ -1,7 +1,10 @@
 package com.example.myapplication.presentation.order
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.myapplication.core.datastore.TokenManager
+import com.example.myapplication.core.network.ApiService
 import com.example.myapplication.data.model.Order
 import com.example.myapplication.domain.repository.IOrderRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -13,7 +16,9 @@ import javax.inject.Inject
 
 @HiltViewModel
 class OrderListViewModel @Inject constructor(
-    private val orderRepository: IOrderRepository
+    private val orderRepository: IOrderRepository,
+    private val apiService: ApiService,  // ⭐ 新增：用于获取代叫订单
+    private val tokenManager: TokenManager  // ⭐ 新增：用于获取用户ID
 ) : ViewModel() {
 
     // 订单列表数据
@@ -48,25 +53,67 @@ class OrderListViewModel @Inject constructor(
         viewModelScope.launch {
             _isLoading.value = true
             _errorMessage.value = null
-            val page = if (loadMore) currentPage + 1 else 1
-            val result = orderRepository.getOrderList(page = page, size = pageSize)
-            if (result.isSuccess()) {
-                val pageData = result.data
-                if (pageData != null) {
-                    if (loadMore) {
-                        // 加载更多：追加到列表末尾
-                        _orders.value = _orders.value + pageData.list
-                    } else {
-                        // 首次加载或刷新：替换列表
-                        _orders.value = pageData.list
-                    }
-                    currentPage = pageData.page
-                    hasMore = currentPage * pageData.size < pageData.total
+            
+            try {
+                val userId = tokenManager.getUserId()
+                if (userId == null) {
+                    _errorMessage.value = "用户未登录"
+                    _isLoading.value = false
+                    return@launch
                 }
-            } else {
-                _errorMessage.value = result.message
+                
+                Log.d("OrderListViewModel", "📦 开始加载订单列表，userId=$userId")
+                
+                // ⭐ 新增：同时加载普通订单和代叫订单
+                val page = if (loadMore) currentPage + 1 else 1
+                
+                // 1. 加载普通订单
+                val orderResult = orderRepository.getOrderList(page = page, size = pageSize)
+                val normalOrders = if (orderResult.isSuccess()) {
+                    val pageData = orderResult.data
+                    if (pageData != null) {
+                        currentPage = pageData.page
+                        hasMore = currentPage * pageData.size < pageData.total
+                        pageData.list
+                    } else {
+                        emptyList()
+                    }
+                } else {
+                    Log.e("OrderListViewModel", "❌ 加载普通订单失败：${orderResult.message}")
+                    emptyList()
+                }
+                
+                // 2. 加载代叫订单（亲友查看为长辈叫的订单）
+                val proxyResult = apiService.getProxyOrders(userId)
+                val proxyOrders = if (proxyResult.isSuccess() && proxyResult.data != null) {
+                    Log.d("OrderListViewModel", "✅ 加载代叫订单成功，数量=${proxyResult.data!!.size}")
+                    proxyResult.data!!
+                } else {
+                    Log.w("OrderListViewModel", "⚠️ 加载代叫订单失败：${proxyResult.message}")
+                    emptyList()
+                }
+                
+                // 3. 合并订单列表（去重，按创建时间排序）
+                val allOrders = (normalOrders + proxyOrders)
+                    .distinctBy { it.id }  // 去重
+                    .sortedByDescending { it.createTime }  // 按时间倒序
+                
+                if (loadMore) {
+                    // 加载更多：追加到列表末尾
+                    _orders.value = _orders.value + allOrders
+                } else {
+                    // 首次加载或刷新：替换列表
+                    _orders.value = allOrders
+                }
+                
+                Log.d("OrderListViewModel", "📊 订单列表加载完成：普通=${normalOrders.size}, 代叫=${proxyOrders.size}, 总计=${_orders.value.size}")
+                
+            } catch (e: Exception) {
+                Log.e("OrderListViewModel", "❌ 加载订单异常", e)
+                _errorMessage.value = "加载失败：${e.message}"
+            } finally {
+                _isLoading.value = false
             }
-            _isLoading.value = false
         }
     }
 

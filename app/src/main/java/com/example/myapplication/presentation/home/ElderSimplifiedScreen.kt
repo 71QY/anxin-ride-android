@@ -276,30 +276,8 @@ fun ElderSimplifiedScreen(
         }
     }
     
-    // ⭐ 新增：监听订单状态，自动跳转到行程追踪页面
-    var hasHandledOrderSuccess by remember { mutableStateOf(false) }
-    LaunchedEffect(orderState) {
-        when (val currentState = orderState) {
-            is HomeViewModel.OrderState.Success -> {
-                if (hasHandledOrderSuccess) return@LaunchedEffect
-                
-                val order = currentState.order
-                Log.d("ElderSimplifiedScreen", "✅ 订单创建成功，跳转到行程追踪: orderId=${order.id}")
-                hasHandledOrderSuccess = true
-                onNavigateToOrderTracking(order.id)
-                viewModel.resetOrderState()
-            }
-            is HomeViewModel.OrderState.Error -> {
-                toastMessage = currentState.message
-                viewModel.resetOrderState()
-                hasHandledOrderSuccess = false
-            }
-            is HomeViewModel.OrderState.Idle -> {
-                hasHandledOrderSuccess = false
-            }
-            else -> {}
-        }
-    }
+    // ⭐ 修复：长辈端不监听 orderState，因为长辈不能自己创建订单
+    // 订单只能通过代叫车流程产生，由 WebSocket ORDER_CREATED 消息触发
     
     // 6. Toast显示
     LaunchedEffect(toastMessage) {

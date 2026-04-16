@@ -77,6 +77,13 @@
         @ApplicationContext private val appContext: Context
     ) : ViewModel() {
     
+        // ⭐ 新增：伴生对象，存放静态标志
+        companion object {
+            // ⭐ 修复：使用伴生对象的静态变量，避免跨实例重复监听 WebSocket
+            @Volatile
+            private var wsMessageListenerStarted = false
+        }
+    
         // ⭐ 新增：聚合 UI 状态
         data class HomeUiState(
             val destination: String = "",
@@ -179,8 +186,7 @@
         // ⭐ 新增：长辈列表加载标志（用于缓存）
         private var _elderListLoaded = false
         
-        // ⭐ 新增：WebSocket 消息监听标志（避免重复创建协程）
-        private var _wsMessageListenerStarted = false
+        // ⚠️ 已移除：_wsMessageListenerStarted，改用伴生对象的静态变量
         
         // ⭐ 高优先级2：代叫车请求通知（用于长辈端）
         data class ProxyOrderRequest(
@@ -1718,12 +1724,8 @@
                                     _orderState.value = OrderState.Success(responseData)
                                     _events.send(HomeEvent.OrderCreated(responseData))
                                     
-                                    // ⭐ 修复：延迟发送导航事件，确保 orderState 已被 UI 层收集
-                                    viewModelScope.launch {
-                                        kotlinx.coroutines.delay(100)  // 延迟 100ms
-                                        _events.send(HomeEvent.NavigateToOrderTracking(responseData.id))
-                                        Log.d("HomeViewModel", "🚀 已发送导航事件: orderId=${responseData.id}")
-                                    }
+                                    // ⭐ 修复：普通用户代叫车后不跳转，等待长辈确认结果
+                                    // 不再发送 NavigateToOrderTracking 事件
                                     
                                     // ⭐ 新增：发送全局事件，通知长辈端显示确认框
                                     viewModelScope.launch {
@@ -1777,12 +1779,8 @@
                                         _orderState.value = OrderState.Success(tempOrder)
                                         _events.send(HomeEvent.OrderCreated(tempOrder))
                                         
-                                        // ⭐ 修复：延迟发送导航事件，确保 orderState 已被 UI 层收集
-                                        viewModelScope.launch {
-                                            kotlinx.coroutines.delay(100)  // 延迟 100ms
-                                            _events.send(HomeEvent.NavigateToOrderTracking(tempOrder.id))
-                                            Log.d("HomeViewModel", "🚀 已发送导航事件（Map类型）: orderId=${tempOrder.id}")
-                                        }
+                                        // ⭐ 修复：普通用户代叫车后不跳转，等待长辈确认结果
+                                        // 不再发送 NavigateToOrderTracking 事件
                                         
                                         // ⭐ 新增：发送全局事件，通知长辈端显示确认框
                                         viewModelScope.launch {
@@ -1870,11 +1868,11 @@
                     if (response.isSuccess()) {
                         Log.d("HomeViewModel", "✅ 确认成功：${response.message}")
                         
-                        // ⭐ 修复：确认后跳转到行程追踪页
+                        // ⭐ 修复：长辈确认后，延迟500ms再跳转，确保UI动画完成
                         if (confirmed) {
                             Log.d("HomeViewModel", "🚀 长辈已同意，准备跳转到行程追踪页: orderId=$orderId")
                             viewModelScope.launch {
-                                kotlinx.coroutines.delay(100)  // 延迟 100ms
+                                kotlinx.coroutines.delay(500)  // ⭐ 增加延迟到500ms，让UI动画完成
                                 _events.send(HomeEvent.NavigateToOrderTracking(orderId))
                                 Log.d("HomeViewModel", "🚀 已发送导航事件（长辈确认）: orderId=$orderId")
                             }
@@ -1883,6 +1881,14 @@
                         }
                     } else {
                         Log.e("HomeViewModel", "❌ 确认失败：${response.message}")
+                        // ⭐ 新增：确认失败时显示错误提示
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(
+                                appContext,
+                                "确认失败：${response.message}",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e("HomeViewModel", "❌ 确认异常", e)
@@ -2057,15 +2063,10 @@
                                 }
                                 
                                 "ORDER_ACCEPTED" -> {
-                                    // ⭐ 司机已接单，自动跳转到行程追踪页面
+                                    // ⭐ 修复：司机已接单，由 OrderTrackingViewModel 处理，不再这里跳转
                                     val orderId = pushMessage.orderId ?: 0L
-                                    Log.d("HomeViewModel", "✅ 司机已接单，准备跳转：orderId=$orderId")
-                                    
-                                    // ⭐ 触发导航事件
-                                    viewModelScope.launch {
-                                        _events.send(HomeEvent.NavigateToOrderTracking(orderId))
-                                        Log.d("HomeViewModel", "🚀 已发送导航事件: orderId=$orderId")
-                                    }
+                                    Log.d("HomeViewModel", "✅ 收到 ORDER_ACCEPTED（GUARD_PUSH包装），orderId=$orderId")
+                                    // 不触发导航，由 OrderTrackingScreen 处理 DRIVER_REQUEST 确认后自动显示
                                 }
                                 
                                 "CHAT_MESSAGE" -> {
@@ -2083,6 +2084,12 @@
                             // ORDER_CREATED 类型：data 字段是 JSON 对象
                             Log.d("HomeViewModel", "🚗 收到代叫车创建消息")
                             
+                            // ⭐ 关键修复：只有长辈端才需要显示确认弹窗
+                            if (!_isElderMode.value) {
+                                Log.d("HomeViewModel", "⏭️ 当前是普通用户，忽略 ORDER_CREATED 消息（由后端推送给代叫人作为确认）")
+                                return@launch
+                            }
+                            
                             val dataObj = jsonObject.optJSONObject("data")
                             if (dataObj == null) {
                                 Log.w("HomeViewModel", "⚠️ [HomeViewModel] data 对象为空")
@@ -2095,6 +2102,13 @@
                             
                             Log.d("HomeViewModel", "🚗 收到代叫车请求：orderId=$orderId, requester=$requesterName, dest=$destAddress")
                             
+                            // ⭐ 关键修复：设置 _proxyOrderRequest 触发 UI 弹窗
+                            _proxyOrderRequest.value = ProxyOrderRequest(
+                                orderId = orderId,
+                                requesterName = requesterName,
+                                destination = destAddress
+                            )
+                            
                             // ⭐ 发送高优先级通知
                             sendIncomingCallNotification(
                                 orderId = orderId,
@@ -2104,15 +2118,10 @@
                         }
                         
                         "ORDER_ACCEPTED" -> {
-                            // ⭐ 直接接收的司机接单消息（非 GUARD_PUSH 包装）
+                            // ⭐ 修复：直接接收的司机接单消息，由 OrderTrackingViewModel 处理
                             val orderId = jsonObject.optLong("orderId", 0L)
-                            Log.d("HomeViewModel", "✅ 司机已接单（直接消息），准备跳转：orderId=$orderId")
-                            
-                            // ⭐ 触发导航事件
-                            viewModelScope.launch {
-                                _events.send(HomeEvent.NavigateToOrderTracking(orderId))
-                                Log.d("HomeViewModel", "🚀 已发送导航事件: orderId=$orderId")
-                            }
+                            Log.d("HomeViewModel", "✅ 收到 ORDER_ACCEPTED（直接消息），orderId=$orderId")
+                            // 不触发导航，由 OrderTrackingScreen 处理 DRIVER_REQUEST 确认后自动显示
                         }
                         
                         "DRIVER_LOCATION" -> {
@@ -2238,24 +2247,27 @@
                     // ⭐ 关键修复：HomeViewModel 也需要监听 WebSocket 消息，处理 GUARD_PUSH 类型
                     // 这样即使没有进入聊天页面，也能收到代叫车推送
                     
-                    if (!_wsMessageListenerStarted) {
-                        _wsMessageListenerStarted = true
-                        Log.d("HomeViewModel", "🚀 启动 WebSocket 消息监听协程...")
-                        
-                        viewModelScope.launch {
-                            try {
-                                Log.d("HomeViewModel", "🔄 HomeViewModel 开始监听 WebSocket 消息流...")
-                                webSocketClient.messages.collect { serverMessage ->
-                                    Log.d("HomeViewModel", "📥 [WS监听] HomeViewModel 收到消息: ${serverMessage.take(150)}...")
-                                    parseGuardPushMessage(serverMessage)
+                    // ⭐ 修复：使用伴生对象的静态标志避免跨实例重复监听
+                    synchronized(HomeViewModel::class.java) {
+                        if (!wsMessageListenerStarted) {
+                            wsMessageListenerStarted = true
+                            Log.d("HomeViewModel", "🚀 启动 WebSocket 消息监听协程...")
+                            
+                            viewModelScope.launch {
+                                try {
+                                    Log.d("HomeViewModel", "🔄 HomeViewModel 开始监听 WebSocket 消息流...")
+                                    webSocketClient.messages.collect { serverMessage ->
+                                        Log.d("HomeViewModel", "📥 [WS监听] HomeViewModel 收到消息: ${serverMessage.take(150)}...")
+                                        parseGuardPushMessage(serverMessage)
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e("HomeViewModel", "❌ HomeViewModel 消息监听异常", e)
                                 }
-                            } catch (e: Exception) {
-                                Log.e("HomeViewModel", "❌ HomeViewModel 消息监听异常", e)
                             }
+                            Log.d("HomeViewModel", "✅ WebSocket 消息监听协程已启动")
+                        } else {
+                            Log.w("HomeViewModel", "⏭️ WebSocket 消息监听已存在，跳过重复创建")
                         }
-                        Log.d("HomeViewModel", "✅ WebSocket 消息监听协程已启动")
-                    } else {
-                        Log.w("HomeViewModel", "⏭️ WebSocket 消息监听已存在，跳过重复创建")
                     }
                     
                     Log.d("HomeViewModel", "✅ WebSocket 连接请求已发送（HomeViewModel 和 ChatViewModel 同时监听）")

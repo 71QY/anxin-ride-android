@@ -82,7 +82,9 @@ fun ChatScreen(
     viewModel: ChatViewModel = hiltViewModel(),
     onNavigateToOrder: (Long) -> Unit,
     chatMode: ChatMode = ChatMode.AGENT,  // ⭐ 新增：聊天模式参数
-    isElderMode: Boolean = false  // ⭐ 新增：长辈模式标识
+    isElderMode: Boolean = false,  // ⭐ 新增：长辈模式标识
+    showBackButton: Boolean = true,  // ⭐ 新增：是否显示返回按钮
+    onBackClick: (() -> Unit)? = null  // ⭐ 新增：返回按钮回调
 ) {
     val context = LocalContext.current
 
@@ -411,11 +413,15 @@ fun ChatScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // 返回按钮
-                IconButton(
-                    onClick = { onNavigateToOrder(-1L) },
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                if (showBackButton) {
+                    IconButton(
+                        onClick = { 
+                            onBackClick?.invoke() ?: onNavigateToOrder(-1L)
+                        },
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                    }
                 }
                 
                 // 标题区域
@@ -597,12 +603,6 @@ fun ChatScreen(
                         contentDescription = "语音",
                         tint = if (isListening) Color.Red else MaterialTheme.colorScheme.onSurface  // ⭐ 录音中显示红色
                     )
-                }
-
-                IconButton(
-                    onClick = { showImagePickerDialog = true }
-                ) {
-                    Icon(Icons.Default.Image, contentDescription = "图片")
                 }
             }
         }

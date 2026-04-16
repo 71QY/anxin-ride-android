@@ -58,3 +58,10 @@ data class Order(
         }
     }
 }
+
+// ⭐ 新增：确认/拒绝司机接单请求
+@Serializable
+data class ConfirmDriverRequest(
+    @SerialName("orderId") val orderId: Long,
+    @SerialName("accepted") val accepted: Boolean  // true=同意, false=拒绝
+)

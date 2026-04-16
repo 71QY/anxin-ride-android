@@ -46,7 +46,9 @@ data class WsMessage(
 ) {
     companion object {
         const val TYPE_CONNECTED = "connected"
+        const val TYPE_DRIVER_REQUEST = "DRIVER_REQUEST"  // ⭐ 新增：司机接单请求
         const val TYPE_ORDER_ACCEPTED = "ORDER_ACCEPTED"
+        const val TYPE_DRIVER_REJECTED = "DRIVER_REJECTED"  // ⭐ 新增：用户拒绝接单
         const val TYPE_DRIVER_LOCATION = "DRIVER_LOCATION"
         const val TYPE_DRIVER_ARRIVED = "DRIVER_ARRIVED"
         const val TYPE_ORDER_CREATED = "ORDER_CREATED"
