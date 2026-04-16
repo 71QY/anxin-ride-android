@@ -757,10 +757,10 @@ private fun ElderCard(
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Surface(
-                        modifier = Modifier.size(40.dp),
+                        modifier = Modifier.size(48.dp),
                         shape = MaterialTheme.shapes.medium,
                         color = MaterialTheme.colorScheme.primaryContainer
                     ) {
@@ -769,7 +769,7 @@ private fun ElderCard(
                                 Icons.Default.Person,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(24.dp)
+                                modifier = Modifier.size(28.dp)
                             )
                         }
                     }
@@ -793,7 +793,7 @@ private fun ElderCard(
                     onClick = { },
                     label = {
                         Text(
-                            text = if (elder.status == 1) "已激活" else "待激活",
+                            text = if (elder.status == 1) "✅ 已激活" else "⏳ 待激活",
                             style = MaterialTheme.typography.labelSmall
                         )
                     },
@@ -811,8 +811,13 @@ private fun ElderCard(
             
             // 详细信息
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                InfoRow(label = "用户ID", value = elder.userId?.toString() ?: "未知")  // ⭐ 修复：ElderInfo没有idCard字段，改用userId
-                InfoRow(label = "绑定时间", value = formatTime(elder.bindTime))
+                InfoRow(label = "用户ID", value = elder.userId?.toString() ?: "未知")
+                InfoRow(label = "绑定关系ID", value = elder.guardId.toString())
+                if (!elder.relationship.isNullOrBlank()) {
+                    InfoRow(label = "与长辈关系", value = elder.relationship)
+                }
+                InfoRow(label = "绑定时间", value = formatBindTime(elder.bindTime))
+                InfoRow(label = "账号状态", value = if (elder.status == 1) "✅ 已激活" else "⏳ 待激活")
             }
             
             // 操作按钮
@@ -854,6 +859,22 @@ private fun InfoRow(label: String, value: String) {
     }
 }
 
-private fun formatTime(time: Any?): String {
-    return time?.toString() ?: "未知"
+private fun formatBindTime(bindTime: String?): String {
+    return if (bindTime.isNullOrBlank()) {
+        "未知"
+    } else {
+        try {
+            // 假设后端返回 ISO 8601 格式：2024-01-15T10:30:00
+            val parts = bindTime.split("T")
+            if (parts.size >= 2) {
+                val date = parts[0]  // 2024-01-15
+                val time = parts[1].substring(0, 5)  // 10:30
+                "$date $time"
+            } else {
+                bindTime
+            }
+        } catch (e: Exception) {
+            bindTime
+        }
+    }
 }

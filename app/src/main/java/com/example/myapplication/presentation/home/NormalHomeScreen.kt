@@ -179,12 +179,14 @@ fun NormalHomeScreen(
         }
     }
     
-    // 4. POI搜索结果监听
-    var lastResultSize by remember { mutableStateOf(0) }
+    // 4. POI搜索结果监听 - ⭐ 修复：只要有结果就显示对话框
     LaunchedEffect(backendPoiResults) {
-        if (backendPoiResults.isNotEmpty() && backendPoiResults.size != lastResultSize) {
+        if (backendPoiResults.isNotEmpty()) {
+            Log.d("NormalHomeScreen", "🔍 收到搜索结果，共${backendPoiResults.size}条，显示对话框")
             showPoiDialog = true
-            lastResultSize = backendPoiResults.size
+        } else {
+            // ⭐ 清空结果时关闭对话框
+            showPoiDialog = false
         }
     }
     
@@ -360,9 +362,6 @@ fun NormalHomeScreen(
                         .padding(end = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    IconButton(onClick = { showMapSettingsDialog = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "地图设置", tint = Color(0xFF165DFF), modifier = Modifier.size(22.dp))
-                    }
                     IconButton(onClick = onNavigateToProfile) {
                         Icon(Icons.Default.Person, contentDescription = "个人中心", tint = Color(0xFF165DFF), modifier = Modifier.size(22.dp))
                     }
@@ -513,38 +512,59 @@ fun NormalHomeScreen(
             }
         }
         
-        // 6. 底部面板 - ⭐ 优化：下移1cm（约38dp），更靠近底部导航栏
+        // 6. 底部面板 - ⭐ 优化：添加平滑动画和更好的拖动响应
+        val animatedBottomPanelHeight by animateIntAsState(
+            targetValue = bottomPanelHeight,
+            label = "bottomPanelHeight"
+        )
+        
         Card(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .height(bottomPanelHeight.dp)
+                .height(animatedBottomPanelHeight.dp)
                 .offset(y = 38.dp)  // ⭐ 修复：下移1cm，使用offset而非padding
                 .pointerInput(Unit) {
-                        detectVerticalDragGestures(
-                            onVerticalDrag = { _, dragAmount ->
-                                val newHeight = (bottomPanelHeight - dragAmount.toInt()).coerceIn(minPanelHeight, maxPanelHeight)
-                                if (newHeight != bottomPanelHeight) {
-                                    bottomPanelHeight = newHeight
-                                }
+                    detectVerticalDragGestures(
+                        onVerticalDrag = { _, dragAmount ->
+                            // ⭐ 优化：增加灵敏度，直接更新高度
+                            val newHeight = (bottomPanelHeight - dragAmount.toInt()).coerceIn(minPanelHeight, maxPanelHeight)
+                            if (newHeight != bottomPanelHeight) {
+                                bottomPanelHeight = newHeight
                             }
-                        )
-                    },
-                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
-                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)  // ⭐ 优化：更轻的阴影
+                        },
+                        onDragEnd = {
+                            // ⭐ 优化：拖动结束时自动吸附到合适的位置
+                            when {
+                                bottomPanelHeight < 200 -> bottomPanelHeight = minPanelHeight
+                                bottomPanelHeight > 450 -> bottomPanelHeight = maxPanelHeight
+                                else -> bottomPanelHeight = 350  // 中间位置
+                            }
+                        }
+                    )
+                },
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)  // ⭐ 优化：增加阴影提升层次感
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).verticalScroll(rememberScrollState())
             ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).verticalScroll(rememberScrollState())  // ⭐ 优化：更紧凑的内边距
+                // 拖动手柄 - ⭐ 优化：更明显的视觉反馈
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(20.dp)  // ⭐ 增加可点击区域
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    // 拖动手柄
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .height(3.dp)
-                            .background(Color(0xFFE0E0E0), RoundedCornerShape(1.5.dp))
+                            .width(40.dp)
+                            .height(4.dp)
+                            .background(Color(0xFFCCCCCC), RoundedCornerShape(2.dp))
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                }
                     
                     // 标题 - ⭐ 优化：加大字号
                     Text(
@@ -555,35 +575,100 @@ fun NormalHomeScreen(
                         modifier = Modifier.padding(bottom = 4.dp)  // ⭐ 优化：减小间距，使卡片更紧凑
                     )
                     
-                    // 目的地输入框
+                    // 目的地输入框 - ⭐ 优化：添加防抖和更好的交互反馈
                     var isSearchFieldFocused by remember { mutableStateOf(false) }
                     val focusRequester = FocusRequester()
+                    var lastSearchTime by remember { mutableStateOf(0L) }
                     
                     OutlinedTextField(
                         value = destination,
-                        onValueChange = { viewModel.updateDestination(it) },
-                        modifier = Modifier.fillMaxWidth().height(52.dp).focusRequester(focusRequester).onFocusChanged { isSearchFieldFocused = it.isFocused },  // ⭐ 修复：从42.dp增加到52.dp，避免折叠
+                        onValueChange = { 
+                            viewModel.updateDestination(it)
+                            // ⭐ 优化：输入时清空之前的搜索结果，避免显示过时数据
+                            if (it.isBlank()) {
+                                viewModel.clearSearchResults()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(52.dp).focusRequester(focusRequester).onFocusChanged { isSearchFieldFocused = it.isFocused },
                         placeholder = { Text("你要去哪？", color = Color(0xFF999999), fontSize = 16.sp) },
                         colors = OutlinedTextFieldDefaults.colors(
                             unfocusedContainerColor = Color(0xFFF5F7FA),
-                            focusedContainerColor = Color(0xFFF5F7FA),
+                            focusedContainerColor = Color.White,
                             unfocusedBorderColor = Color.Transparent,
-                            focusedBorderColor = Color.Transparent,
+                            focusedBorderColor = Color(0xFF165DFF),
                             cursorColor = Color(0xFF165DFF)
                         ),
                         textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Normal, color = Color(0xFF1A1A1A)),
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions.Default.copy(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+                        keyboardActions = KeyboardActions(
+                            onSearch = {
+                                // ⭐ 优化：点击键盘搜索按钮时触发搜索
+                                Log.d("NormalHomeScreen", "🔍 键盘搜索按钮被点击")
+                                Log.d("NormalHomeScreen", "  - destination=$destination")
+                                Log.d("NormalHomeScreen", "  - currentLocation=$currentLocation")
+                                
+                                if (destination.isBlank()) {
+                                    Toast.makeText(context, "请输入目的地", Toast.LENGTH_SHORT).show()
+                                    return@KeyboardActions
+                                }
+                                
+                                if (currentLocation == null) {
+                                    Toast.makeText(context, "请先获取当前位置", Toast.LENGTH_SHORT).show()
+                                    return@KeyboardActions
+                                }
+                                
+                                val currentTime = System.currentTimeMillis()
+                                if (currentTime - lastSearchTime < 500) {
+                                    Log.d("NormalHomeScreen", "⚠️ 防抖：搜索过于频繁")
+                                    return@KeyboardActions
+                                }
+                                lastSearchTime = currentTime
+                                
+                                Log.d("NormalHomeScreen", "✅ 开始搜索：$destination")
+                                viewModel.searchPoiFromBackend(destination)
+                            }
+                        ),
                         trailingIcon = {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                if (!isSearching && destination.isNotBlank()) {
-                                    IconButton(onClick = {
-                                        if (currentLocation != null) {
-                                            viewModel.searchPoiFromBackend(destination)
-                                        } else {
-                                            Toast.makeText(context, "请先获取当前位置", Toast.LENGTH_SHORT).show()
+                                // ⭐ 优化：搜索按钮始终可见，但禁用状态时有视觉反馈
+                                IconButton(
+                                    onClick = {
+                                        Log.d("NormalHomeScreen", "🔍 搜索按钮被点击")
+                                        Log.d("NormalHomeScreen", "  - destination=$destination")
+                                        Log.d("NormalHomeScreen", "  - currentLocation=$currentLocation")
+                                        
+                                        if (destination.isBlank()) {
+                                            Toast.makeText(context, "请输入目的地", Toast.LENGTH_SHORT).show()
+                                            return@IconButton
                                         }
-                                    }, modifier = Modifier.size(40.dp)) {
-                                        Icon(Icons.Default.Search, contentDescription = "搜索", tint = Color(0xFF165DFF), modifier = Modifier.size(24.dp))
+                                        
+                                        if (currentLocation == null) {
+                                            Toast.makeText(context, "请先获取当前位置", Toast.LENGTH_SHORT).show()
+                                            return@IconButton
+                                        }
+                                        
+                                        val currentTime = System.currentTimeMillis()
+                                        if (currentTime - lastSearchTime < 500) {
+                                            Log.d("NormalHomeScreen", "⚠️ 防抖：搜索过于频繁")
+                                            return@IconButton
+                                        }
+                                        lastSearchTime = currentTime
+                                        
+                                        Log.d("NormalHomeScreen", "✅ 开始搜索：$destination")
+                                        viewModel.searchPoiFromBackend(destination)
+                                    },
+                                    modifier = Modifier.size(40.dp),
+                                    enabled = !isSearching && destination.isNotBlank()  // ⭐ 优化：搜索中时禁用
+                                ) {
+                                    if (isSearching) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(20.dp),
+                                            color = Color(0xFF165DFF),
+                                            strokeWidth = 2.dp
+                                        )
+                                    } else {
+                                        Icon(Icons.Default.Search, contentDescription = "搜索", tint = if (destination.isNotBlank()) Color(0xFF165DFF) else Color.Gray, modifier = Modifier.size(24.dp))
                                     }
                                 }
                                 
@@ -692,27 +777,84 @@ fun NormalHomeScreen(
     
     // ========== 对话框 ==========
     
-    // POI选择对话框
+    // POI选择对话框 - ⭐ 优化：使用AnimatedVisibility和更好的列表项样式
     if (showPoiDialog && backendPoiResults.isNotEmpty()) {
         AlertDialog(
             onDismissRequest = { showPoiDialog = false; viewModel.clearSearchResults() },
-            title = { Text("选择目的地") },
+            title = { 
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Text("选择目的地", fontWeight = FontWeight.Bold)
+                }
+            },
             text = {
-                LazyColumn {
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 400.dp),  // ⭐ 限制最大高度
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
                     items(backendPoiResults) { poi ->
-                        Column(
-                            modifier = Modifier.fillMaxWidth().clickable {
-                                viewModel.selectBackendPoi(poi)
-                                showPoiDialog = false
-                            }.padding(12.dp)
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    vibrate()  // ⭐ 优化：点击时震动反馈
+                                    viewModel.selectBackendPoi(poi)
+                                    showPoiDialog = false
+                                },
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                         ) {
-                            Text(text = poi.name, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(text = poi.address, fontSize = 14.sp, color = Color.Gray)
-                            if (poi.distance != null) {
-                                Text(text = "距离：${poi.distance}m", fontSize = 12.sp, color = Color.Blue)
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Place,
+                                        contentDescription = null,
+                                        tint = Color(0xFF165DFF),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Text(
+                                        text = poi.name ?: "未知位置",
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = Color(0xFF1A1A1A),
+                                        maxLines = 1
+                                    )
+                                }
+                                Text(
+                                    text = poi.address ?: "未知地址",
+                                    fontSize = 13.sp,
+                                    color = Color(0xFF666666),
+                                    maxLines = 2
+                                )
+                                if (poi.distance != null) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.DirectionsCar,
+                                            contentDescription = null,
+                                            tint = Color(0xFF1677FF),
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Text(
+                                            text = "距离：${String.format("%.1f", poi.distance / 1000.0)}公里",
+                                            fontSize = 12.sp,
+                                            color = Color(0xFF1677FF),
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+                                }
                             }
-                            Divider(modifier = Modifier.padding(top = 8.dp))
                         }
                     }
                 }

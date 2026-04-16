@@ -189,13 +189,13 @@ class OrderTrackingViewModel @Inject constructor(
     }
     
     /**
-     * ⭐ 新增：处理用户拒绝接单
+     * ⭐ 新增:处理用户拒绝接单
      */
     private fun handleDriverRejected(wsMessage: WsMessage) {
         viewModelScope.launch(Dispatchers.Main) {
             val currentState = _uiState.value
             if (currentState is OrderTrackingUiState.Success) {
-                // 清空司机信息，订单状态回到待确认
+                // 清空司机信息,订单状态回到待确认
                 val updatedOrder = currentState.order.copy(
                     driverName = null,
                     driverPhone = null,
@@ -208,12 +208,23 @@ class OrderTrackingViewModel @Inject constructor(
                     driverLat = null,
                     driverLng = null
                 )
-                
+                    
                 _uiState.value = OrderTrackingUiState.Success(updatedOrder)
                 _driverLocation.value = null
-                
+                    
                 // 显示提示
-                _events.emit(OrderTrackingEvent.DriverRejected("您已拒绝该司机，正在为您重新派单"))
+                _events.emit(OrderTrackingEvent.DriverRejected("您已拒绝该司机,正在为您重新派单..."))
+                    
+                // ⭐ 新增:启动10秒倒计时,提示用户等待新司机
+                viewModelScope.launch {
+                    delay(10000)  // 10秒后
+                    val currentStateAfterDelay = _uiState.value
+                    if (currentStateAfterDelay is OrderTrackingUiState.Success && 
+                        currentStateAfterDelay.order.status == 0) {
+                        // 如果订单仍未被取消且没有新司机,显示等待提示
+                        _events.emit(OrderTrackingEvent.DriverRejected("⏳ 正在为您寻找新的司机,请稍候..."))
+                    }
+                }
             }
         }
     }

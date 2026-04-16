@@ -750,19 +750,21 @@
     
         // ⭐ 修改：优化搜索逻辑，允许在没有位置时也能搜索
         fun searchPoiFromBackend(keyword: String, nationwide: Boolean = false) {
+            Log.d("HomeViewModel", "🔍 === searchPoiFromBackend 被调用 ===")
+            Log.d("HomeViewModel", "  - keyword=$keyword")
+            Log.d("HomeViewModel", "  - nationwide=$nationwide")
+            
             if (keyword.isBlank()) {
-                Log.e("HomeViewModel", "搜索关键词为空")
+                Log.e("HomeViewModel", "❌ 搜索关键词为空")
                 return
             }
             
             val location = _currentLocation.value
-            Log.d("HomeViewModel", "=== searchPoiFromBackend 被调用 ===")
-            Log.d("HomeViewModel", "keyword=$keyword, nationwide=$nationwide")
-            Log.d("HomeViewModel", "location=$location")
+            Log.d("HomeViewModel", "  - currentLocation=$location")
             
             // ⭐ 修改：即使没有位置也可以进行全国搜索
             if (location == null && !nationwide) {
-                Log.w("HomeViewModel", "当前位置为空，切换到全国搜索模式")
+                Log.w("HomeViewModel", "⚠️ 当前位置为空，切换到全国搜索模式")
                 searchPoiFromBackend(keyword, true)
                 return
             }
@@ -851,7 +853,8 @@
                             Log.d("HomeViewModel", "  - code=${fallbackResult.code}")
                             Log.d("HomeViewModel", "  - data size=${fallbackResult.data?.size}")
                             
-                            if (result.isSuccess()) {
+                            // ⭐ 修复：检查 fallbackResult 而不是 result
+                            if (fallbackResult.isSuccess()) {
                                 fallbackResult.data?.let { poiList ->
                                     // ⭐ 修改：按后端返回的评分降序排列，评分相同时按距离升序
                                     val sortedPoiList = poiList.sortedWith(

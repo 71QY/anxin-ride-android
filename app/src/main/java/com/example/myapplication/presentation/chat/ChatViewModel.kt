@@ -1513,6 +1513,25 @@ class ChatViewModel @Inject constructor(
         Log.d("ChatViewModel", "=== 开始通过 HTTP API 创建订单 ===")
         Log.d("ChatViewModel", "目的地：$destAddress, lat=$destLat, lng=$destLng")
         
+        // ⭐ 新增:长辈端拦截,不允许下单
+        if (_isElderMode.value) {
+            Log.d("ChatViewModel", "👴 长辈端检测到下单操作,立即拦截")
+            addSystemMessage(
+                "😊 温馨提示:\n" +
+                "长辈端暂不支持直接下单叫车哦~\n" +
+                "\n" +
+                "如需叫车,您可以:\n" +
+                "• 联系您的亲友帮忙代叫\n" +
+                "• 让亲友使用他们的账号为您叫车\n" +
+                "\n" +
+                "💡 我还可以帮您:\n" +
+                "• 查询地点信息\n" +
+                "• 识别图片中的地址\n" +
+                "• 提供路线建议"
+            )
+            return
+        }
+        
         viewModelScope.launch {
             _orderState.value = OrderState.Loading
             
@@ -1559,6 +1578,18 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             Log.d("ChatViewModel", "=== createOrder 被调用 ===")
             Log.d("ChatViewModel", "参数:poiName=$poiName, poiLat=$poiLat, poiLng=$poiLng")
+            
+            // ⭐ 新增:长辈端二次防护,防止绕过前置检查
+            if (_isElderMode.value) {
+                Log.e("ChatViewModel", "❌ 长辈端尝试调用 createOrder,拒绝执行")
+                _orderState.value = OrderState.Error("长辈端不支持下单功能")
+                addSystemMessage(
+                    "😊 温馨提醒:\n" +
+                    "长辈端无法直接下单叫车哦~\n" +
+                    "请联系您的亲友帮忙代叫 🙏"
+                )
+                return@launch
+            }
                 
             // ⭐ 新增:校验 poiName 不能为空
             if (poiName.isBlank()) {
@@ -1845,11 +1876,9 @@ class ChatViewModel @Inject constructor(
                         _poiList.value = poiList
                         _candidates.value = poiList
                         
-                        // ⭐ 如果需要确认，弹出候选列表对话框
-                        if (response.needConfirm) {
-                            Log.d("ChatViewModel", "🔔 需要确认，弹出候选列表对话框")
-                            _showCandidatesDialog.value = true
-                        }
+                        // ⭐ 修复：图片识别有多个结果时，始终弹出候选列表对话框供用户选择
+                        Log.d("ChatViewModel", "🔔 图片识别结果：${poiList.size} 个地点，弹出候选列表对话框")
+                        _showCandidatesDialog.value = true
                     }
                     
                     // ⭐ 语音播报
@@ -1991,25 +2020,45 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    // ⭐ 修改：用户选择候选地点（使用 HTTP API）
+    // ⭐ 修改:用户选择候选地点(使用 HTTP API)
     fun selectCandidate(poi: PoiData) {
         viewModelScope.launch {
             Log.d("ChatViewModel", "=== 用户选择候选地点 ===")
-            Log.d("ChatViewModel", "选择：${poi.name}")
-
+            Log.d("ChatViewModel", "选择:${poi.name}")
+    
+            // ⭐ 新增:长辈端直接拦截,不允许进入下单流程
+            if (_isElderMode.value) {
+                Log.d("ChatViewModel", "👴 长辈端检测到下单操作,立即拦截")
+                addSystemMessage(
+                    "😊 温馨提示:\n" +
+                    "长辈端暂不支持直接下单叫车哦~\n" +
+                    "\n" +
+                    "如需叫车,您可以:\n" +
+                    "• 联系您的亲友帮忙代叫\n" +
+                    "• 让亲友使用他们的账号为您叫车\n" +
+                    "\n" +
+                    "💡 我还可以帮您:\n" +
+                    "• 查询地点信息\n" +
+                    "• 识别图片中的地址\n" +
+                    "• 提供路线建议"
+                )
+                _showCandidatesDialog.value = false
+                return@launch
+            }
+    
             // 添加用户确认消息到聊天历史
             val userConfirmMessage = ChatMessage(
                 id = UUID.randomUUID().toString(),
-                content = "✅ 确认选择：${poi.name}",
+                content = "✅ 确认选择:${poi.name}",
                 isUser = true,
                 timestamp = System.currentTimeMillis()
             )
             _messages.value += userConfirmMessage
-
+    
             // ⭐ 关闭对话框
             _showCandidatesDialog.value = false
             _candidates.value = emptyList()
-
+    
             // ⭐ 使用 HTTP API 确认选择
             val lat = currentLat
             val lng = currentLng
@@ -2017,40 +2066,40 @@ class ChatViewModel @Inject constructor(
                 addSystemMessage("⚠️ 位置信息获取中...")
                 return@launch
             }
-
+    
             val result = agentRepository.confirmSelection(
                 sessionId = sessionId.value,
                 selectedPoiName = poi.name,
                 lat = lat,
                 lng = lng
             )
-
+    
             if (result.isSuccess()) {
                 val response = result.data
                 Log.d("ChatViewModel", "=== 收到确认响应 ===")
                 Log.d("ChatViewModel", "type=${response?.type}, message=${response?.message}")
-                            
+                                
                 when (response?.type) {
                     "ORDER" -> {
                         addSystemMessage(response.message ?: "已确认目的地")
                         // ⭐ 直接从 response 中获取 poi 信息
                         response.poi?.let { poi ->
                             Log.d("ChatViewModel", "POI: name=${poi.name}, lat=${poi.lat}, lng=${poi.lng}")
-                            Log.d("ChatViewModel", "创建订单：${poi.name}")
+                            Log.d("ChatViewModel", "创建订单:${poi.name}")
                             createOrder(poi.name ?: "", poi.lat, poi.lng, 1, null)
                         } ?: run {
                             Log.e("ChatViewModel", "❌ poi 为 null")
                             addSystemMessage("⚠️ 目的地信息缺失")
                         }
                     }
-                                
+                                    
                     else -> {
                         addSystemMessage(response?.message ?: "确认成功")
                     }
                 }
             } else {
-                Log.e("ChatViewModel", "确认失败：${result.message}")
-                addSystemMessage("❌ 确认失败：${result.message}")
+                Log.e("ChatViewModel", "确认失败:${result.message}")
+                addSystemMessage("❌ 确认失败:${result.message}")
             }
         }
     }

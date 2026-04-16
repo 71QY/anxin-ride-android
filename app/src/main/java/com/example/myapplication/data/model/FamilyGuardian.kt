@@ -66,7 +66,8 @@ data class ElderInfo(
     @SerialName("phone") val phone: String,
     @SerialName("name") val name: String,
     @SerialName("status") val status: Int,  // 0-待激活，1-已绑定
-    @SerialName("bindTime") val bindTime: String?
+    @SerialName("bindTime") val bindTime: String?,
+    @SerialName("relationship") val relationship: String? = null  // ⭐ 新增：与长辈关系（如：子女、亲属、护工）
 )
 
 /**
