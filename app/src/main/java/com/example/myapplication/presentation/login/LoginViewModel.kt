@@ -5,11 +5,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.myapplication.core.datastore.TokenManager
 import com.example.myapplication.core.network.ApiService
+import com.example.myapplication.core.utils.AppIconSwitcher
 import com.example.myapplication.data.model.ChangePasswordRequest
 import com.example.myapplication.data.model.CompleteProfileRequest
 import com.example.myapplication.data.model.LoginRequest
 import com.example.myapplication.data.model.RegisterRequest
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -19,6 +21,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class LoginViewModel @Inject constructor(
+    @ApplicationContext private val context: android.content.Context,
     private val api: ApiService,
     private val tokenManager: TokenManager
 ) : ViewModel() {
@@ -735,7 +738,12 @@ class LoginViewModel @Inject constructor(
                 val request = when (_loginType.value) {
                     LoginRequest.TYPE_CODE -> LoginRequest(_phone.value, code = _code.value, loginType = LoginRequest.TYPE_CODE)
                     LoginRequest.TYPE_PASSWORD -> LoginRequest(_phone.value, password = _password.value, loginType = LoginRequest.TYPE_PASSWORD)
-                    else -> throw IllegalStateException("未知的登录类型")
+                    else -> {
+                        Log.e("LoginViewModel", "⚠️ 未知的登录类型: ${_loginType.value}")
+                        _errorMessage.value = "登录类型错误"
+                        _isLoading.value = false
+                        return@launch
+                    }
                 }
                 
                 Log.d("LoginViewModel", "=== 开始登录流程 ===")
@@ -890,21 +898,29 @@ class LoginViewModel @Inject constructor(
                         Log.d("LoginViewModel", "检测到长辈模式，guardMode=${profile.data.guardMode}")
                         // ⭐ 保存到本地存储
                         tokenManager.saveGuardMode(1)
+                        // ⭐ 切换为长辈端图标
+                        AppIconSwitcher.switchToElderIcon(context)
                     } else {
                         Log.d("LoginViewModel", "普通用户模式，guardMode=${profile.data.guardMode}")
                         // ⭐ 保存到本地存储
                         tokenManager.saveGuardMode(0)
+                        // ⭐ 切换为普通用户图标
+                        AppIconSwitcher.switchToDefaultIcon(context)
                     }
                 } else {
                     // ⭐ 修复：API失败时保留本地缓存的guardMode，不覆盖
                     val cachedGuardMode = tokenManager.getGuardMode()
                     Log.w("LoginViewModel", "⚠️ 获取用户信息失败，保留本地缓存的guardMode=$cachedGuardMode")
+                    // ⭐ 根据本地缓存切换图标
+                    AppIconSwitcher.switchIconByGuardMode(context, cachedGuardMode)
                 }
             } catch (e: Exception) {
                 Log.e("LoginViewModel", "检查长辈模式失败", e)
                 // ⭐ 修复：异常时保留本地缓存，不覆盖
                 val cachedGuardMode = tokenManager.getGuardMode()
                 Log.w("LoginViewModel", "⚠️ 网络异常，保留本地缓存的guardMode=$cachedGuardMode")
+                // ⭐ 根据本地缓存切换图标
+                AppIconSwitcher.switchIconByGuardMode(context, cachedGuardMode)
             }
         }
     }

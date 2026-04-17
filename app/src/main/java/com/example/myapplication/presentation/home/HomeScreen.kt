@@ -105,7 +105,7 @@ fun HomeScreen(
     LaunchedEffect(isProfileLoaded) {
         // ⭐ 关键修复：给 loadProfile 留出时间，不立即判断
         if (!hasCheckedProfile) {
-            kotlinx.coroutines.delay(1000)  // 等待 1 秒让 loadProfile 完成
+            delay(1000)  // 等待 1 秒让 loadProfile 完成
             hasCheckedProfile = true
         }
         

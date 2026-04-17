@@ -66,15 +66,41 @@
 
         <activity
             android:name=".MainActivity"
-            android:exported="true"
+            android:exported="false"
             android:label="@string/app_name"
             android:theme="@style/Theme.AnxinChuxing"
-            android:windowSoftInputMode="adjustResize">  <!-- ⭐ 新增：键盘弹出时调整布局 -->
+            android:windowSoftInputMode="adjustResize">
+        </activity>
+
+        <!-- ⭐ 动态图标切换：默认图标（普通用户） -->
+        <activity-alias
+            android:name=".MainActivityDefault"
+            android:enabled="true"
+            android:exported="true"
+            android:targetActivity=".MainActivity"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:label="@string/app_name">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
+
+        <!-- ⭐ 动态图标切换：长辈端图标 -->
+        <activity-alias
+            android:name=".MainActivityElder"
+            android:enabled="false"
+            android:exported="true"
+            android:targetActivity=".MainActivity"
+            android:icon="@mipmap/ic_launcher_elder"
+            android:roundIcon="@mipmap/ic_launcher_elder_round"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
     </application>
 
 </manifest>

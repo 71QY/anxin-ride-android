@@ -599,11 +599,20 @@ fun ProfileScreen(
                                         // 已经是完整 URL
                                         cleanUrl.startsWith("http://") || cleanUrl.startsWith("https://") -> cleanUrl
                                         // 后端返回 /api/xxx，直接使用（BASE_URL已包含/api/）
-                                        cleanUrl.startsWith("/api/") -> "http://10.241.75.80:8080$cleanUrl"
+                                        // 旧后端地址 (A): cleanUrl.startsWith("/api/") -> "http://10.241.75.80:8080$cleanUrl"
+                                        // 中间后端地址 (B): cleanUrl.startsWith("/api/") -> "http://192.168.189.57:8080$cleanUrl"
+                                        // 新后端地址 (C):
+                                        cleanUrl.startsWith("/api/") -> "http://192.168.189.80:8080$cleanUrl"
                                         // 以 / 开头的其他路径
-                                        cleanUrl.startsWith("/") -> "http://10.241.75.80:8080/api$cleanUrl"
+                                        // 旧后端地址 (A): cleanUrl.startsWith("/") -> "http://10.241.75.80:8080/api$cleanUrl"
+                                        // 中间后端地址 (B): cleanUrl.startsWith("/") -> "http://192.168.189.57:8080/api$cleanUrl"
+                                        // 新后端地址 (C):
+                                        cleanUrl.startsWith("/") -> "http://192.168.189.80:8080/api$cleanUrl"
                                         // 不带 / 的相对路径
-                                        else -> "http://10.241.75.80:8080/api/$cleanUrl"
+                                        // 旧后端地址 (A): else -> "http://10.241.75.80:8080/api/$cleanUrl"
+                                        // 中间后端地址 (B): else -> "http://192.168.189.57:8080/api/$cleanUrl"
+                                        // 新后端地址 (C):
+                                        else -> "http://192.168.189.80:8080/api/$cleanUrl"
                                     }
                                 } else null
                                 

@@ -132,6 +132,10 @@ fun NormalHomeScreen(
     var showAgentSheet by remember { mutableStateOf(false) }
     var showDialectDialog by remember { mutableStateOf(false) }
     
+    // ⭐ 新增:收藏取名对话框状态
+    var showFavoriteNameDialog by remember { mutableStateOf(false) }
+    var customFavoriteName by remember { mutableStateOf("") }
+    
     val aMapState = remember { mutableStateOf<AMap?>(null) }
     var bottomPanelHeight by rememberSaveable { mutableStateOf(250) }  // ⭐ 修复：固定初始高度250dp，避免盖过地图，用户可以上拉展开
     val minPanelHeight = 120  // ⭐ 同步增大最小高度
@@ -800,7 +804,7 @@ fun NormalHomeScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    vibrate()  // ⭐ 优化：点击时震动反馈
+                                    vibrate()  // ⭐ 优化:点击时震动反馈
                                     viewModel.selectBackendPoi(poi)
                                     showPoiDialog = false
                                 },
@@ -887,6 +891,31 @@ fun NormalHomeScreen(
                         if (detail.price != null) {
                             Text(text = "预估车费：¥${detail.price}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
                         }
+                        
+                        // ⭐ 修改：收藏按钮 - 弹出取名对话框
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    // ⭐ 弹出取名对话框
+                                    customFavoriteName = detail.name
+                                    showFavoriteNameDialog = true
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FavoriteBorder,
+                                    contentDescription = "收藏",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("收藏", color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
                     }
                 },
                 confirmButton = {
@@ -901,6 +930,68 @@ fun NormalHomeScreen(
                     TextButton(onClick = { viewModel.dismissPoiDetailDialog() }) {
                         Text("取消")
                     }
+                }
+            )
+        }
+    }
+    
+    // ⭐ 新增:收藏取名对话框(用于POI详情弹窗中的收藏按钮)
+    if (showFavoriteNameDialog && poiDetail != null) {
+        poiDetail?.let { detail ->
+            AlertDialog(
+                onDismissRequest = { showFavoriteNameDialog = false },
+                title = { Text("给这个地点取个名字") },
+                text = {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(text = detail.name, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                Text(text = detail.address, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                            }
+                        }
+                        OutlinedTextField(
+                            value = customFavoriteName,
+                            onValueChange = { customFavoriteName = it },
+                            label = { Text("自定义名称") },
+                            placeholder = { Text("如：看病的地方、买菜的地方") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(text = "💡 提示：取一个你容易记住的名字", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (customFavoriteName.isBlank()) return@Button
+                            viewModel.addFavorite(
+                                name = customFavoriteName,
+                                address = detail.address,
+                                latitude = detail.lat,
+                                longitude = detail.lng,
+                                onSuccess = {
+                                    showFavoriteNameDialog = false
+                                    viewModel.dismissPoiDetailDialog()
+                                    Toast.makeText(context, "已收藏该地点", Toast.LENGTH_SHORT).show()
+                                },
+                                onError = { errorMsg ->
+                                    Toast.makeText(context, "收藏失败：$errorMsg", Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        },
+                        enabled = customFavoriteName.isNotBlank()
+                    ) { Text("保存") }
+                },
+                dismissButton = {
+                    OutlinedButton(onClick = { showFavoriteNameDialog = false }) { Text("取消") }
                 }
             )
         }

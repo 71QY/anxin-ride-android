@@ -38,6 +38,8 @@ import com.example.myapplication.data.model.CallDriverResponse  // ⭐ 新增：
 import com.example.myapplication.data.model.CallGuardianResponse  // ⭐ 新增：呼叫亲友响应
 import com.example.myapplication.data.model.PrivateChatMessage  // ⭐ 新增：私聊消息
 import com.example.myapplication.data.model.SendPrivateMessageRequest  // ⭐ 新增：发送私聊请求
+import com.example.myapplication.data.model.FavoriteLocation  // ⭐ 新增：收藏地点
+import com.example.myapplication.data.model.SaveFavoriteRequest  // ⭐ 新增：保存收藏请求
 import okhttp3.MultipartBody
 import retrofit2.http.*
 
@@ -441,6 +443,42 @@ interface ApiService {
     suspend fun getUnreadCount(
         @Header("X-User-Id") userId: Long
     ): Result<Map<Long, Int>>  // Map<senderId, unreadCount>
+
+    // ========== 收藏常用地点接口 ==========
+
+    /**
+     * 获取收藏列表
+     * GET /api/favorites
+     */
+    @GET("favorites")
+    suspend fun getFavorites(): Result<List<FavoriteLocation>>
+
+    /**
+     * 添加收藏
+     * POST /api/favorites
+     */
+    @POST("favorites")
+    suspend fun addFavorite(
+        @Body request: SaveFavoriteRequest
+    ): Result<FavoriteLocation>
+
+    /**
+     * 更新收藏
+     * PUT /api/favorites
+     */
+    @PUT("favorites")
+    suspend fun updateFavorite(
+        @Body request: SaveFavoriteRequest
+    ): Result<FavoriteLocation>
+
+    /**
+     * 删除收藏
+     * DELETE /api/favorites/{id}
+     */
+    @DELETE("favorites/{id}")
+    suspend fun deleteFavorite(
+        @Path("id") favoriteId: Long
+    ): Result<Unit>
 }
 
 // ⭐ 新增：路线规划响应

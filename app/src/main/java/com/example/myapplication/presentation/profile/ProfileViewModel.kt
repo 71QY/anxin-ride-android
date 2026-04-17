@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.myapplication.MyApplication
 import com.example.myapplication.core.datastore.TokenManager
 import com.example.myapplication.core.network.ApiService
+import com.example.myapplication.core.utils.AppIconSwitcher
 import com.example.myapplication.data.model.ChangePasswordRequest
 import com.example.myapplication.data.model.EmergencyContact
 import com.example.myapplication.data.model.RealNameRequest
@@ -21,6 +22,7 @@ import com.example.myapplication.data.model.GuardianInfo
 import com.example.myapplication.data.model.ElderInfo  // ⭐ 新增：长辈信息模型
 import com.example.myapplication.domain.repository.IOrderRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,6 +43,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class ProfileViewModel @Inject constructor(
+    @ApplicationContext private val context: android.content.Context,
     private val api: ApiService,
     private val tokenManager: TokenManager
 ) : ViewModel() {
@@ -243,6 +246,10 @@ class ProfileViewModel @Inject constructor(
                     Log.d("ProfileViewModel", "  Avatar: ${profileData?.avatar}")
                     Log.d("ProfileViewModel", "  Real name: ${profileData?.realName}")
                     Log.d("ProfileViewModel", "  Verified status: verified=${profileData?.verified}")
+                    Log.d("ProfileViewModel", "  Guard mode: guardMode=${profileData?.guardMode}")
+                    // ⭐ 新增：根据 guardMode 切换应用图标
+                    val guardMode = profileData?.guardMode ?: 0
+                    AppIconSwitcher.switchIconByGuardMode(context, guardMode)
                     // ⭐ 重置认证失败标志
                     _authFailure.value = false
                 } else {
@@ -398,13 +405,22 @@ class ProfileViewModel @Inject constructor(
                             avatarUrl
                         } else if (avatarUrl.startsWith("/api/")) {
                             // 后端返回 /api/xxx，直接拼接 BASE_URL（去掉末尾的 /api/）
-                            "http://10.241.75.80:8080$avatarUrl"
+                            // 旧后端地址 (A): "http://10.241.75.80:8080$avatarUrl"
+                            // 中间后端地址 (B): "http://192.168.189.57:8080$avatarUrl"
+                            // 新后端地址 (C):
+                            "http://192.168.189.80:8080$avatarUrl"
                         } else if (avatarUrl.startsWith("/")) {
                             // 以 / 开头的其他路径
-                            "http://10.241.75.80:8080/api$avatarUrl"
+                            // 旧后端地址 (A): "http://10.241.75.80:8080/api$avatarUrl"
+                            // 中间后端地址 (B): "http://192.168.189.57:8080/api$avatarUrl"
+                            // 新后端地址 (C):
+                            "http://192.168.189.80:8080/api$avatarUrl"
                         } else {
                             // 不带 / 的相对路径
-                            "http://10.241.75.80:8080/api/$avatarUrl"
+                            // 旧后端地址 (A): "http://10.241.75.80:8080/api/$avatarUrl"
+                            // 中间后端地址 (B): "http://192.168.189.57:8080/api/$avatarUrl"
+                            // 新后端地址 (C):
+                            "http://192.168.189.80:8080/api/$avatarUrl"
                         }
                         
                         Log.d("ProfileViewModel", "✅ 头像上传成功")
@@ -1285,6 +1301,10 @@ class ProfileViewModel @Inject constructor(
                 tokenManager.clearToken()
                 Log.d("ProfileViewModel", "已清除本地 Token 和 guardMode")
                 
+                // ⭐ 3.1 退出登录后切换回默认图标
+                AppIconSwitcher.switchToDefaultIcon(context)
+                Log.d("ProfileViewModel", "已切换回默认图标")
+                
                 // ⭐ 4. 重置所有状态
                 _profile.value = null
                 _contacts.value = emptyList()
@@ -1319,6 +1339,8 @@ class ProfileViewModel @Inject constructor(
                 // ⭐ 即使异常也要尝试清除本地数据
                 try {
                     tokenManager.clearToken()
+                    // ⭐ 异常时也切换回默认图标
+                    AppIconSwitcher.switchToDefaultIcon(context)
                     onLogoutComplete()
                 } catch (e2: Exception) {
                     Log.e("ProfileViewModel", "清除本地数据也失败", e2)

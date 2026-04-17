@@ -74,6 +74,7 @@
         private val webSocketClient: com.example.myapplication.core.websocket.ChatWebSocketClient,  // ⭐ 新增
         private val agentRepository: AgentRepository,  // ⭐ 新增
         private val tokenManager: TokenManager,  // ⭐ 新增
+        private val favoritesRepository: com.example.myapplication.data.repository.FavoritesRepository,  // ⭐ 新增：收藏仓库
         @ApplicationContext private val appContext: Context
     ) : ViewModel() {
     
@@ -265,6 +266,141 @@
             // ⭐ 不再自动触发搜索
             if (text.isBlank()) {
                 clearSearchResults()
+            }
+        }
+        
+        // ⭐ 新增：从收藏设置目的地（带坐标，直接显示POI详情）
+        fun setDestinationFromFavorite(name: String, latitude: Double, longitude: Double) {
+            Log.d("HomeViewModel", "📍 从收藏设置目的地：$name, lat=$latitude, lng=$longitude")
+            
+            // ⭐ 设置目的地
+            _destination.value = name
+            _clickedLocation.value = com.amap.api.maps.model.LatLng(latitude, longitude)
+            _geocodeError.value = null
+            
+            // ⭐ 清空之前的搜索结果
+            clearSearchResults()
+            
+            // ⭐ 直接显示POI详情对话框（类似搜索后点击地点的效果）
+            viewModelScope.launch {
+                try {
+                    val latLng = com.amap.api.maps.model.LatLng(latitude, longitude)
+                    
+                    // 获取地址
+                    val address = fetchPoiAddress(latLng)
+                    
+                    // 计算距离和费用
+                    val currentLocation = _currentLocation.value
+                    var distance: Double? = null
+                    var duration: Int? = null
+                    var price: Int? = null
+                    var formattedDistance: String? = null
+                    
+                    if (currentLocation != null) {
+                        // 先使用直线距离
+                        val straightDistance = calculateDistance(
+                            currentLocation.latitude,
+                            currentLocation.longitude,
+                            latitude,
+                            longitude
+                        )
+                        
+                        // 异步调用路径规划获取真实里程
+                        val routeResult = calculateRouteDistance(currentLocation, latLng)
+                        
+                        if (routeResult != null && routeResult.distance > 0) {
+                            distance = routeResult.distance.toDouble()
+                            duration = routeResult.duration.toInt()
+                            price = calculatePrice(distance)
+                            formattedDistance = formatDistance(distance)
+                            Log.d("HomeViewModel", "使用路径规划距离：${distance}米")
+                        } else {
+                            distance = straightDistance
+                            formattedDistance = formatDistance(distance)
+                            duration = (straightDistance / 500 * 3).toLong().toInt()
+                            price = calculatePrice(distance)
+                        }
+                    }
+                    
+                    // 生成 sessionId
+                    val sessionId = "favorite_${System.currentTimeMillis()}"
+                    
+                    // 设置 POI 详情
+                    _poiDetail.value = PoiDetail(
+                        name = name,
+                        address = address ?: name,
+                        lat = latitude,
+                        lng = longitude,
+                        distance = distance,
+                        duration = duration,
+                        price = price,
+                        canOrder = true,
+                        formattedDistance = formattedDistance,
+                        sessionId = sessionId
+                    )
+                    
+                    // 显示 POI 详情对话框
+                    _showPoiDetailDialog.value = true
+                    
+                    Log.d("HomeViewModel", "✅ 已设置 POI 详情对话框，等待用户确认目的地")
+                    
+                } catch (e: Exception) {
+                    Log.e("HomeViewModel", "❌ 设置收藏目的地失败", e)
+                    // 降级处理：至少显示基本信息
+                    _poiDetail.value = PoiDetail(
+                        name = name,
+                        address = name,
+                        lat = latitude,
+                        lng = longitude,
+                        canOrder = true,
+                        sessionId = "favorite_${System.currentTimeMillis()}"
+                    )
+                    _showPoiDetailDialog.value = true
+                }
+            }
+            
+            Log.d("HomeViewModel", "✅ 收藏目的地设置完成，POI详情对话框将自动显示")
+        }
+    
+        // ⭐ 新增：从 POI 详情对话框添加收藏
+        fun addFavorite(
+            name: String,
+            address: String,
+            latitude: Double,
+            longitude: Double,
+            onSuccess: () -> Unit = {},
+            onError: (String) -> Unit = {}
+        ) {
+            viewModelScope.launch {
+                try {
+                    Log.d("HomeViewModel", "➕ 从 POI 详情添加收藏：$name")
+                    val request = com.example.myapplication.data.model.SaveFavoriteRequest(
+                        name = name,
+                        address = address,
+                        latitude = latitude,
+                        longitude = longitude,
+                        type = "CUSTOM"
+                    )
+                    
+                    val result = favoritesRepository.addFavorite(request)
+                    
+                    result.onSuccess { favorite ->
+                        Log.d("HomeViewModel", "✅ 收藏成功")
+                        onSuccess()
+                    }.onFailure { error ->
+                        val errorMsg = when {
+                            error.message?.contains("429") == true || error.message?.contains("超限") == true -> {
+                                "收藏数量已达上限（最多50个）"
+                            }
+                            else -> error.message ?: "添加收藏失败"
+                        }
+                        Log.e("HomeViewModel", "❌ 收藏失败：$errorMsg")
+                        onError(errorMsg)
+                    }
+                } catch (e: Exception) {
+                    Log.e("HomeViewModel", "❌ 收藏异常", e)
+                    onError(e.message ?: "网络异常")
+                }
             }
         }
     
@@ -1345,39 +1481,53 @@
                     
                     // ⭐ 再从服务器同步最新状态
                     Log.d("HomeViewModel", "🌐 开始请求 getUserProfile API...")
-                    val profile = apiService.getUserProfile()
-                    Log.d("HomeViewModel", "📥 getUserProfile 响应：isSuccess=${profile.isSuccess()}, code=${profile.code}, message=${profile.message}")
+                    val profile = try {
+                        apiService.getUserProfile()
+                    } catch (e: Exception) {
+                        Log.e("HomeViewModel", "❌ getUserProfile API 调用异常", e)
+                        // ⭐ 网络异常时使用本地缓存
+                        Log.w("HomeViewModel", "⚠️ 网络异常，使用本地缓存的长辈模式：${_isElderMode.value}")
+                        // ⭐ 继续执行后续逻辑，不中断流程
+                        null
+                    }
                     
-                    if (profile.isSuccess() && profile.data != null) {
-                        // ⭐ 修改：使用 guardMode 字段（0普通模式 1长辈精简模式）
-                        val serverGuardMode = profile.data.guardMode
-                        _isElderMode.value = serverGuardMode == 1
+                    if (profile != null) {
+                        Log.d("HomeViewModel", "📥 getUserProfile 响应：isSuccess=${profile.isSuccess()}, code=${profile.code}, message=${profile.message}")
                         
-                        // ⭐ 更新本地存储
-                        tokenManager.saveGuardMode(serverGuardMode)
-                        
-                        Log.d("HomeViewModel", "✅ 从服务器同步长辈模式：${_isElderMode.value}, guardMode=$serverGuardMode")
-                        Log.d("HomeViewModel", "📊 用户信息：userId=${profile.data.id}, nickname=${profile.data.nickname}")
-                    } else {
-                        // ⭐ 关键修复：只有认证失败才触发退出登录，网络错误等使用本地缓存
-                        val isAuthError = profile.code == 401 || 
-                                         profile.message?.contains("Unauthorized", ignoreCase = true) == true ||
-                                         profile.message?.contains("token invalid", ignoreCase = true) == true ||
-                                         profile.message?.contains("token expired", ignoreCase = true) == true ||
-                                         profile.message?.contains("token失效", ignoreCase = true) == true ||
-                                         profile.message?.contains("认证失败", ignoreCase = true) == true ||
-                                         profile.message?.contains("登录已过期", ignoreCase = true) == true
-                        
-                        if (isAuthError) {
-                            Log.e("HomeViewModel", "❌ 认证失败，需要重新登录：code=${profile.code}, message=${profile.message}")
-                            _isProfileLoaded.value = false  // ⭐ 明确标记为未加载
-                            onAuthFailure?.invoke()
-                            return@launch
+                        if (profile.isSuccess() && profile.data != null) {
+                            // ⭐ 修改：使用 guardMode 字段（0普通模式 1长辈精简模式）
+                            val serverGuardMode = profile.data.guardMode
+                            _isElderMode.value = serverGuardMode == 1
+                            
+                            // ⭐ 更新本地存储
+                            tokenManager.saveGuardMode(serverGuardMode)
+                            
+                            Log.d("HomeViewModel", "✅ 从服务器同步长辈模式：${_isElderMode.value}, guardMode=$serverGuardMode")
+                            Log.d("HomeViewModel", "📊 用户信息：userId=${profile.data.id}, nickname=${profile.data.nickname}")
                         } else {
-                            // 网络错误、服务器错误等，使用本地缓存
-                            // ⭐ 保持 _isProfileLoaded = true，不触发退出登录
-                            Log.w("HomeViewModel", "⚠️ 获取用户信息失败（非认证错误），使用本地缓存：code=${profile.code}, message=${profile.message}")
+                            // ⭐ 关键修复：只有认证失败才触发退出登录，网络错误等使用本地缓存
+                            val isAuthError = profile.code == 401 || 
+                                             profile.message?.contains("Unauthorized", ignoreCase = true) == true ||
+                                             profile.message?.contains("token invalid", ignoreCase = true) == true ||
+                                             profile.message?.contains("token expired", ignoreCase = true) == true ||
+                                             profile.message?.contains("token失效", ignoreCase = true) == true ||
+                                             profile.message?.contains("认证失败", ignoreCase = true) == true ||
+                                             profile.message?.contains("登录已过期", ignoreCase = true) == true
+                            
+                            if (isAuthError) {
+                                Log.e("HomeViewModel", "❌ 认证失败，需要重新登录：code=${profile.code}, message=${profile.message}")
+                                _isProfileLoaded.value = false  // ⭐ 明确标记为未加载
+                                onAuthFailure?.invoke()
+                                return@launch
+                            } else {
+                                // 网络错误、服务器错误等，使用本地缓存
+                                // ⭐ 保持 _isProfileLoaded = true，不触发退出登录
+                                Log.w("HomeViewModel", "⚠️ 获取用户信息失败（非认证错误），使用本地缓存：code=${profile.code}, message=${profile.message}")
+                            }
                         }
+                    } else {
+                        // ⭐ API 调用异常，使用本地缓存
+                        Log.w("HomeViewModel", "⚠️ API 调用失败，使用本地缓存的长辈模式：${_isElderMode.value}")
                     }
                     
                     // ⭐ 修复：无论长辈模式还是普通模式，都保持 WebSocket 连接

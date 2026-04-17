@@ -6,6 +6,7 @@ import android.util.Log
 import com.example.myapplication.core.datastore.TokenManager
 import com.example.myapplication.core.network.ApiService
 import com.example.myapplication.core.network.RetrofitClient
+import com.example.myapplication.core.utils.AppIconSwitcher
 import com.example.myapplication.debug.HiltDebugChecker
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -67,6 +68,9 @@ class MyApplication : Application() {
             // ⭐ 新增：应用启动时检查并清理无效数据
             checkAndClearInvalidData()
             
+            // ⭐ 新增：应用启动时恢复应用图标（根据本地缓存的 guardMode）
+            restoreAppIcon()
+            
             Log.d(TAG, "=== MyApplication onCreate completed ===")
         } catch (e: Exception) {
             Log.e(TAG, "MyApplication onCreate failed", e)
@@ -110,6 +114,30 @@ class MyApplication : Application() {
             Log.d(TAG, "✅ 所有用户数据已清除完毕")
         } catch (e: Exception) {
             Log.e(TAG, "❌ 清除用户数据失败", e)
+        }
+    }
+    
+    /**
+     * ⭐ 新增：应用启动时恢复应用图标
+     * 根据本地缓存的 guardMode 自动切换图标
+     */
+    private fun restoreAppIcon() {
+        try {
+            val guardMode = tokenManager.getGuardMode()
+            val token = tokenManager.getToken()
+            
+            Log.d(TAG, "🔄 恢复应用图标：guardMode=$guardMode, token=${if (token != null) "存在" else "null"}")
+            
+            // 如果有 token 且 guardMode=1，则切换到长辈端图标
+            if (!token.isNullOrBlank() && guardMode == 1) {
+                Log.d(TAG, "🔄 检测到长辈端用户，切换到长辈端图标")
+                AppIconSwitcher.switchToElderIcon(this)
+            } else {
+                Log.d(TAG, "🔄 检测到普通用户或未登录，切换到默认图标")
+                AppIconSwitcher.switchToDefaultIcon(this)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ 恢复应用图标失败", e)
         }
     }
 }

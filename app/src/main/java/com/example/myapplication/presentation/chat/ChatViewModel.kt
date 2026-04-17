@@ -145,32 +145,37 @@ class ChatViewModel @Inject constructor(
 
         // ⭐ 优化：异步初始化，不阻塞 UI
         viewModelScope.launch {
-            val token = withContext(Dispatchers.IO) {
-                MyApplication.tokenManager.getToken()
-            }
-            
-            // ⭐ 获取 userId，用于生成 sessionId
-            val userId = withContext(Dispatchers.IO) {
-                tokenManager.getUserId()
-            }
-
-            if (!token.isNullOrBlank() && userId != null) {
-                // ⭐ sessionId 格式：user_{userId}
-                val wsSessionId = "user_$userId"
-                // ⭐ 同步更新 sessionId StateFlow
-                _sessionId.value = wsSessionId
-                
-                try {
-                    // ⭐ 优化：非阻塞连接，立即返回
-                    webSocketClient.connect(wsSessionId, token)
-                    Log.d("ChatViewModel", "WebSocket 连接请求已发送，sessionId=$wsSessionId")
-                } catch (e: Exception) {
-                    Log.e("ChatViewModel", "WebSocket 连接异常", e)
-                    addSystemMessage("⚠️ 连接异常：${e.message}")
+            try {
+                val token = withContext(Dispatchers.IO) {
+                    MyApplication.tokenManager.getToken()
                 }
-            } else {
-                Log.e("ChatViewModel", "❌ Token 为空，无法连接 WebSocket")
-                addSystemMessage("⚠️ 请先登录，再进行对话")
+                
+                // ⭐ 获取 userId，用于生成 sessionId
+                val userId = withContext(Dispatchers.IO) {
+                    tokenManager.getUserId()
+                }
+
+                if (!token.isNullOrBlank() && userId != null) {
+                    // ⭐ sessionId 格式：user_{userId}
+                    val wsSessionId = "user_$userId"
+                    // ⭐ 同步更新 sessionId StateFlow
+                    _sessionId.value = wsSessionId
+                    
+                    try {
+                        // ⭐ 优化：非阻塞连接，立即返回
+                        webSocketClient.connect(wsSessionId, token)
+                        Log.d("ChatViewModel", "WebSocket 连接请求已发送，sessionId=$wsSessionId")
+                    } catch (e: Exception) {
+                        Log.e("ChatViewModel", "WebSocket 连接异常", e)
+                        addSystemMessage("⚠️ 连接异常：${e.message}")
+                    }
+                } else {
+                    Log.w("ChatViewModel", "⚠️ Token 为空或 userId 为 null，跳过 WebSocket 连接")
+                    // ⭐ 不显示错误消息，因为可能还未登录
+                }
+            } catch (e: Exception) {
+                Log.e("ChatViewModel", "❌ ChatViewModel 初始化异常", e)
+                // ⭐ 不抛出异常，避免应用崩溃
             }
         }
 

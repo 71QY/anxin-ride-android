@@ -7,6 +7,13 @@
     </base-config>
 
     <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">10.241.75.80</domain>
+        <!-- 旧后端地址 (A): -->
+        <!-- <domain includeSubdomains="true">10.241.75.80</domain> -->
+            
+        <!-- 中间后端地址 (B): -->
+        <!-- <domain includeSubdomains="true">192.168.189.57</domain> -->
+        
+        <!-- 新后端地址 (C): -->
+        <domain includeSubdomains="true">192.168.189.80</domain>
     </domain-config>
 </network-security-config>

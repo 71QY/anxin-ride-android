@@ -3,9 +3,9 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- 汽车主体 - 蓝色 -->
+    <!-- 汽车主体 - 橙色 -->
     <path
-        android:fillColor="#4A90E2"
+        android:fillColor="#E8730C"
         android:pathData="M54,32c-10,0 -19,5 -23,14c-2,4 -3,10 -3,15v3c0,7 5,12 12,12h28c7,0 12,-5 12,-12v-3c0,-5 -1,-11 -3,-15c-4,-9 -13,-14 -23,-14z"/>
     <!-- 挡风玻璃 - 白色 -->
     <path
@@ -31,4 +31,8 @@
     <path
         android:fillColor="#FFFFFF"
         android:pathData="M40,50h28v8h-28z"/>
+    <!-- 长辈端文字 - 白色（上方） -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M42,28h24v5h-24z"/>
 </vector>

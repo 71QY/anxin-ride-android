@@ -67,6 +67,7 @@ import com.example.myapplication.presentation.order.OrderDetailScreen
 import com.example.myapplication.presentation.order.OrderListScreen
 import com.example.myapplication.presentation.orderTracking.OrderTrackingScreen  // ⭐ 新增：订单追踪页面
 import com.example.myapplication.presentation.profile.ProfileScreen
+import com.example.myapplication.presentation.favorites.FavoritesScreen  // ⭐ 新增：收藏页面
 import com.example.myapplication.service.AgentFloatService
 import com.example.myapplication.ui.theme.AnxinChuxingTheme
 import com.example.myapplication.debug.WebSocketDebugMonitor
@@ -419,32 +420,15 @@ fun MyApplicationApp(
                     )
                 }
                 "favorites" -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.FavoriteBorder,
-                            contentDescription = null,
-                            modifier = Modifier.size(64.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "暂无收藏",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "点击地图标记常用地点",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    // ⭐ 收藏常用地点页面
+                    FavoritesScreen(
+                        onNavigateToHomeWithDestination = { name, lat, lng ->
+                            Log.d("MainActivity", "📍 从收藏跳转到首页，目的地：$name, lat=$lat, lng=$lng")
+                            currentDestination = "home"
+                            // ⭐ 通过 HomeViewModel 设置目的地
+                            homeViewModel.setDestinationFromFavorite(name, lat, lng)
+                        }
+                    )
                 }
                 "chat" -> {
                     // ⭐ 新增：收集长辈/亲友列表
