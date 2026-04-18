@@ -295,6 +295,18 @@ class OrderTrackingViewModel @Inject constructor(
             
             // 更新 ETA
             _etaMinutes.value = wsMessage.etaMinutes
+            
+            // ⭐ 新增：自动完成行程逻辑
+            val currentState = _uiState.value
+            if (currentState is OrderTrackingUiState.Success) {
+                val order = currentState.order
+                
+                // 如果订单状态是行程中(status=5) 且 ETA <= 0，自动完成行程
+                if (order.status == 5 && wsMessage.etaMinutes != null && wsMessage.etaMinutes <= 0) {
+                    Log.d("OrderTrackingVM", "⏰ ETA已到期，自动完成行程")
+                    autoFinishTrip(order.id)
+                }
+            }
         }
     }
 
@@ -497,6 +509,28 @@ class OrderTrackingViewModel @Inject constructor(
         } catch (e: Exception) {
             Log.e("OrderTrackingVM", "❌ 完成行程异常", e)
             false
+        }
+    }
+    
+    /**
+     * ⭐ 新增：自动完成行程（根据 ETA 推算）
+     */
+    private suspend fun autoFinishTrip(orderId: Long) {
+        try {
+            Log.d("OrderTrackingVM", "🚀 开始自动完成行程: orderId=$orderId")
+            
+            val success = finishTrip(orderId)
+            
+            if (success) {
+                Log.d("OrderTrackingVM", "✅ 自动完成行程成功")
+            } else {
+                Log.e("OrderTrackingVM", "❌ 自动完成行程失败，将重试...")
+                // 如果失败，5秒后重试一次
+                kotlinx.coroutines.delay(5000)
+                finishTrip(orderId)
+            }
+        } catch (e: Exception) {
+            Log.e("OrderTrackingVM", "❌ 自动完成行程异常", e)
         }
     }
 

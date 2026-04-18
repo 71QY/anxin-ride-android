@@ -122,7 +122,7 @@ fun OrderTrackingScreen(
                         MarkerOptions()
                             .position(location)
                             .icon(BitmapDescriptorFactory.fromResource(
-                                R.drawable.ic_driver_tracking  // ⭐ 修复：使用新的司机追踪图标
+                                R.drawable.ic_taxi_driver  // ⭐ 替换：使用出租车司机图标
                             ))
                             .anchor(0.5f, 1.0f)  // ⭐ 修复：锚点改为底部中心，让车标底部对准位置
                             .title("司机位置")

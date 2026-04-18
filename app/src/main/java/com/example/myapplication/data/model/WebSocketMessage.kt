@@ -54,7 +54,7 @@ data class WebSocketResponse(
 @OptIn(kotlinx.serialization.InternalSerializationApi::class)
 @Serializable
 data class GuardPushMessage(
-    val type: String,                          // NEW_ORDER / CHAT_MESSAGE
+    val type: String,                          // NEW_ORDER / CHAT_MESSAGE / FAVORITE_SHARED
     val orderId: Long? = null,                 // 订单ID
     val orderNo: String? = null,               // 订单号
     val destAddress: String? = null,           // 目的地地址
@@ -63,7 +63,16 @@ data class GuardPushMessage(
     val senderType: Int? = null,               // 发送者类型：1-长辈 2-亲友 3-司机（聊天消息）
     val messageType: Int? = null,              // 消息类型：1-文字 2-语音 3-快捷短语（聊天消息）
     val content: String? = null,               // 消息内容（聊天消息）
-    val timestamp: Long = System.currentTimeMillis()  // 时间戳
+    val timestamp: Long = System.currentTimeMillis(),  // 时间戳
+    
+    // ⭐ 新增：分享收藏地点相关字段
+    val favoriteId: Long? = null,              // 收藏ID
+    val favoriteName: String? = null,          // 收藏地点名称
+    val favoriteAddress: String? = null,       // 收藏地点地址
+    val favoriteLatitude: Double? = null,      // 纬度
+    val favoriteLongitude: Double? = null,     // 经度
+    val favoritePhone: String? = null,         // 电话
+    val favoriteDescription: String? = null    // 描述
 )
 
 // ⭐ 已删除重复的 UserMessage 和 UserImage 类（它们有独立的文件）

@@ -87,20 +87,15 @@ fun ElderSimplifiedScreen(
     var driverPhone by remember { mutableStateOf<String?>(null) }
     var driverName by remember { mutableStateOf<String?>(null) }
     
-    // 代叫车相关状态
-    var showProxyOrderConfirmDialog by remember { mutableStateOf(false) }
-    var pendingProxyOrderId by remember { mutableStateOf<Long?>(null) }
-    var proxyOrderRequesterName by remember { mutableStateOf<String?>(null) }
-    var proxyOrderDestination by remember { mutableStateOf<String?>(null) }
-    var lastProxyOrderId by remember { mutableStateOf<Long?>(null) }
+    // ⭐ 修复：代叫车相关状态已移至 MainActivity 全局处理，此处移除
     
-    // ========== 从ViewModel收集状态 ==========
+    // ========== 从 ViewModel 收集状态 ==========
     val currentLocation by viewModel.currentLocation.collectAsStateWithLifecycle()
     val locationAccuracy by viewModel.locationAccuracy.collectAsStateWithLifecycle()
     val orderState by viewModel.orderState.collectAsStateWithLifecycle()
     val userId by viewModel.userId.collectAsStateWithLifecycle()
     val guardianInfoList by viewModel.guardianInfoList.collectAsStateWithLifecycle()
-    val proxyOrderRequest by viewModel.proxyOrderRequest.collectAsStateWithLifecycle()
+    // ⭐ 修复：proxyOrderRequest 已移至 MainActivity 全局监听，此处不再需要
     
     // ========== 权限管理 ==========
     val locationPermissionState = rememberPermissionState(permission = Manifest.permission.ACCESS_FINE_LOCATION)
@@ -230,30 +225,8 @@ fun ElderSimplifiedScreen(
         }
     }
     
-    // 5. 监听代叫车请求
-    LaunchedEffect(proxyOrderRequest) {
-        proxyOrderRequest?.let { request ->
-            if (request.orderId == lastProxyOrderId && showProxyOrderConfirmDialog) {
-                return@let
-            }
-            
-            Log.d("ElderSimplifiedScreen", "✅ 收到代叫车请求：orderId=${request.orderId}")
-            Log.d("ElderSimplifiedScreen", "👤 代叫人：${request.requesterName}")
-            Log.d("ElderSimplifiedScreen", "📍 目的地：${request.destination}")
-            
-            pendingProxyOrderId = request.orderId
-            proxyOrderRequesterName = request.requesterName
-            proxyOrderDestination = request.destination
-            lastProxyOrderId = request.orderId
-            showProxyOrderConfirmDialog = true
-            
-            Log.d("ElderSimplifiedScreen", "🔔 显示代叫车确认对话框")
-            
-            viewModel.clearProxyOrderRequest()
-        } ?: run {
-            Log.d("ElderSimplifiedScreen", "ℹ️ proxyOrderRequest 为 null")
-        }
-    }
+    // 5. ⭐ 修复：代叫车请求已移至 MainActivity 全局处理，此处不再监听
+    // 避免与全局弹窗冲突
     
     // ⭐ 新增：监听 HomeEvent 事件（处理长辈确认后的跳转）
     LaunchedEffect(Unit) {
@@ -821,51 +794,6 @@ fun ElderSimplifiedScreen(
     
     // ========== 对话框 ==========
     
-    // 代叫车确认对话框
-    if (showProxyOrderConfirmDialog) {
-        AlertDialog(
-            onDismissRequest = {
-                showProxyOrderConfirmDialog = false
-                pendingProxyOrderId?.let { orderId ->
-                    viewModel.confirmProxyOrder(orderId, confirmed = false, rejectReason = "暂时不需要")
-                }
-            },
-            title = { Text("代叫车请求") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("代叫人：${proxyOrderRequesterName ?: "未知"}")
-                    Text("目的地：${proxyOrderDestination ?: "未知"}")
-                    Text("是否接受此叫车请求？")
-                }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    pendingProxyOrderId?.let { orderId ->
-                        viewModel.confirmProxyOrder(orderId, confirmed = true)
-                        toastMessage = "已接受叫车请求"
-                    }
-                    showProxyOrderConfirmDialog = false
-                    pendingProxyOrderId = null
-                }) {
-                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("接受")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    pendingProxyOrderId?.let { orderId ->
-                        viewModel.confirmProxyOrder(orderId, confirmed = false, rejectReason = "暂时不需要")
-                        toastMessage = "已拒绝叫车请求"
-                    }
-                    showProxyOrderConfirmDialog = false
-                    pendingProxyOrderId = null
-                }) {
-                    Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("拒绝")
-                }
-            }
-        )
-    }
+    // ⭐ 修复：代叫车确认对话框已移至 MainActivity 全局处理，此处移除
+    // 避免与全局弹窗冲突
 }

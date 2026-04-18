@@ -147,4 +147,34 @@ class FavoritesRepository @Inject constructor(
             Result.failure(e)
         }
     }
+    
+    /**
+     * ⭐ 新增：分享收藏地点给长辈（添加到长辈的收藏列表）
+     */
+    suspend fun shareFavoriteToElder(request: ShareFavoriteRequest): Result<Unit> {
+        return try {
+            Log.d(TAG, "📤 分享收藏到长辈: favoriteId=${request.favoriteId}, elderUserId=${request.elderUserId}")
+            val response = apiService.shareFavoriteToElder(request)
+            
+            // ⭐ 调试：打印完整响应
+            Log.d(TAG, "📥 后端响应: code=${response.code}, message=${response.message}, data=${response.data}")
+            
+            if (response.isSuccess()) {
+                // ⭐ 修复：检查message是否包含错误信息
+                if (response.message.contains("系统繁忙") || response.message.contains("失败") || response.message.contains("错误")) {
+                    Log.e(TAG, "❌ 分享失败（code=200但message异常）：${response.message}")
+                    Result.failure(Exception(response.message))
+                } else {
+                    Log.d(TAG, "✅ 分享成功，已添加到长辈收藏列表")
+                    Result.success(Unit)
+                }
+            } else {
+                Log.e(TAG, "❌ 分享失败：${response.message}")
+                Result.failure(Exception(response.message))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ 分享收藏到长辈异常", e)
+            Result.failure(e)
+        }
+    }
 }

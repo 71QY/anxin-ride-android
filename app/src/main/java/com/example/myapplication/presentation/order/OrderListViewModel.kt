@@ -39,7 +39,8 @@ class OrderListViewModel @Inject constructor(
     private val pageSize = 10
 
     init {
-        loadOrders()
+        // ⭐ 修复：不在 init 中自动加载，等待 OrderListScreen 传入 isElderMode 参数
+        // loadOrders()
     }
 
     /**

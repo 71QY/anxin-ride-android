@@ -42,7 +42,9 @@ data class SaveFavoriteRequest(
 @Serializable
 data class ShareFavoriteRequest(
     @SerialName("favoriteId") val favoriteId: Long,  // 收藏地点ID
-    @SerialName("guardianUserId") val guardianUserId: Long  // 亲友用户ID
+    @SerialName("guardianUserId") val guardianUserId: Long? = null,  // 亲友用户ID（长辈分享给亲友）
+    @SerialName("elderUserId") val elderUserId: Long? = null,  // 长辈用户ID（亲友分享给长辈）
+    @SerialName("saveAsNew") val saveAsNew: Boolean = true  // 是否保存为新收藏
 )
 
 /**

@@ -51,7 +51,8 @@ fun PrivateChatScreen(
     guardianId: Long,
     guardianName: String,
     onBackClick: () -> Unit,
-    isElderMode: Boolean = false  // ⭐ 新增：长辈模式标识
+    isElderMode: Boolean = false,  // ⭐ 新增：长辈模式标识
+    onNavigateToHomeWithDestination: ((String, Double, Double) -> Unit)? = null  // ⭐ 新增：跳转到首页叫车
 ) {
     val context = LocalContext.current
     
@@ -62,6 +63,31 @@ fun PrivateChatScreen(
     
     var inputText by remember { mutableStateOf("") }
     val lazyListState = rememberLazyListState()
+    
+    // ⭐ 新增：读取分享的地点信息
+    var sharedLocation by remember { mutableStateOf<Triple<String, Double, Double>?>(null) }  // name, lat, lng
+    
+    LaunchedEffect(guardianId) {
+        // 读取 SharedPreferences 中的地点信息
+        val prefs = context.getSharedPreferences("chat_location_$guardianId", Context.MODE_PRIVATE)
+        val locationName = prefs.getString("location_name", null)
+        val locationAddress = prefs.getString("location_address", null)
+        val locationLat = prefs.getFloat("location_lat", 0f).toDouble()
+        val locationLng = prefs.getFloat("location_lng", 0f).toDouble()
+        val timestamp = prefs.getLong("timestamp", 0L)
+        
+        // 如果地点信息存在且在 5 分钟内，则显示
+        if (locationName != null && locationAddress != null && locationLat != 0.0 && locationLng != 0.0) {
+            val age = System.currentTimeMillis() - timestamp
+            if (age < 5 * 60 * 1000) {  // 5 分钟内有效
+                sharedLocation = Triple(locationName, locationLat, locationLng)
+                Log.d("PrivateChatScreen", "📍 显示分享地点：$locationName")
+            } else {
+                // 过期清除
+                prefs.edit().clear().apply()
+            }
+        }
+    }
     
     // 录音权限
     val audioPermissionState = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
@@ -137,6 +163,23 @@ fun PrivateChatScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(vertical = 16.dp)
             ) {
+                // ⭐ 新增：如果有分享的地点，先显示地点卡片
+                sharedLocation?.let { (name, lat, lng) ->
+                    item {
+                        SharedLocationCard(
+                            locationName = name,
+                            onUseForTaxi = {
+                                // ⭐ 一键填充到打车界面
+                                onNavigateToHomeWithDestination?.invoke(name, lat, lng)
+                                // 清除地点信息
+                                val prefs = context.getSharedPreferences("chat_location_$guardianId", Context.MODE_PRIVATE)
+                                prefs.edit().clear().apply()
+                                sharedLocation = null
+                            }
+                        )
+                    }
+                }
+                
                 items(messages) { message ->
                     PrivateChatBubble(
                         message = message,
@@ -223,6 +266,75 @@ fun PrivateChatScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * ⭐ 新增：分享的地点卡片
+ */
+@Composable
+fun SharedLocationCard(
+    locationName: String,
+    onUseForTaxi: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Send,  // 使用Send图标作为地点标识
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "📍 分享的地点",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Text(
+                text = locationName,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            Button(
+                onClick = onUseForTaxi,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Send,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("一键填充到打车界面")
             }
         }
     }

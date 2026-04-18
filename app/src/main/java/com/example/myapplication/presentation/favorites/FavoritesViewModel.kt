@@ -27,7 +27,8 @@ import javax.inject.Inject
 @HiltViewModel
 class FavoritesViewModel @Inject constructor(
     private val repository: FavoritesRepository,
-    private val apiService: ApiService
+    private val apiService: ApiService,
+    private val tokenManager: com.example.myapplication.core.datastore.TokenManager  // ⭐ 新增：注入 TokenManager
 ) : ViewModel() {
 
     private val TAG = "FavoritesViewModel"
@@ -138,6 +139,11 @@ class FavoritesViewModel @Inject constructor(
         viewModelScope.launch {
             _isLoading.value = true
             _errorMessage.value = null
+            
+            // ⭐ 新增：打印当前用户信息
+            val userId = tokenManager.getUserId()
+            val guardMode = tokenManager.getGuardMode()
+            Log.d(TAG, "👤 当前用户: userId=$userId, guardMode=${if (guardMode == 1) "长辈端" else "普通用户"}")
             
             try {
                 Log.d(TAG, "🔄 开始刷新收藏列表")
@@ -543,6 +549,92 @@ class FavoritesViewModel @Inject constructor(
                 val errorMsg = e.message ?: "网络异常"
                 Log.e(TAG, "❌ 确认到达异常", e)
                 onError(errorMsg)
+            }
+        }
+    }
+    
+    /**
+     * ⭐ 新增：获取出行记录列表(行程凭证)
+     */
+    private val _travelRecords = MutableStateFlow<List<com.example.myapplication.data.model.TravelRecord>>(emptyList())
+    val travelRecords: StateFlow<List<com.example.myapplication.data.model.TravelRecord>> = _travelRecords
+    
+    fun getTravelRecords(
+        page: Int = 1,
+        size: Int = 10,
+        startDate: String? = null,
+        endDate: String? = null,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                Log.d(TAG, "📋 获取出行记录：page=$page, size=$size")
+                
+                val result = apiService.getTravelRecords(page, size, startDate, endDate)
+                
+                if (result.isSuccess()) {
+                    val response = result.data
+                    if (response != null) {
+                        _travelRecords.value = response.records
+                        Log.d(TAG, "✅ 获取出行记录成功，共${response.total}条")
+                        onSuccess()
+                    } else {
+                        onError("数据为空")
+                    }
+                } else {
+                    val errorMsg = result.message ?: "获取失败"
+                    Log.e(TAG, "❌ 获取出行记录失败：$errorMsg")
+                    onError(errorMsg)
+                }
+            } catch (e: Exception) {
+                val errorMsg = e.message ?: "网络异常"
+                Log.e(TAG, "❌ 获取出行记录异常", e)
+                onError(errorMsg)
+            }
+        }
+    }
+    
+    /**
+     * ⭐ 新增：分享收藏地点给长辈（添加到长辈的收藏列表）
+     */
+    fun shareFavoriteToElder(
+        favoriteId: Long,
+        elderUserId: Long,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _errorMessage.value = null
+            
+            try {
+                Log.d(TAG, "📤 分享收藏到长辈: favoriteId=$favoriteId, elderUserId=$elderUserId")
+                
+                val request = ShareFavoriteRequest(
+                    favoriteId = favoriteId,
+                    elderUserId = elderUserId,
+                    saveAsNew = true  // 保存为新收藏
+                )
+                
+                val result = repository.shareFavoriteToElder(request)
+                
+                result.onSuccess {
+                    Log.d(TAG, "✅ 分享成功，已添加到长辈收藏列表")
+                    onSuccess()
+                }.onFailure { error ->
+                    val errorMsg = error.message ?: "分享失败"
+                    Log.e(TAG, "❌ 分享失败: $errorMsg")
+                    _errorMessage.value = errorMsg
+                    onError(errorMsg)
+                }
+            } catch (e: Exception) {
+                val errorMsg = e.message ?: "网络异常"
+                Log.e(TAG, "❌ 分享异常", e)
+                _errorMessage.value = errorMsg
+                onError(errorMsg)
+            } finally {
+                _isLoading.value = false
             }
         }
     }

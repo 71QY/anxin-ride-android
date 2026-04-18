@@ -198,18 +198,6 @@ fun FavoritesScreen(
                             // ⭐ 查看详情
                             favoriteToView = favorite
                         },
-                        onConfirmArrival = {
-                            // ⭐ 确认到达
-                            viewModel.confirmArrival(
-                                favoriteId = favorite.id ?: return@FavoriteItemCard,
-                                onSuccess = {
-                                    Toast.makeText(context, "✅ 已通知亲友您已到达", Toast.LENGTH_LONG).show()
-                                },
-                                onError = { error ->
-                                    Toast.makeText(context, "❌ $error", Toast.LENGTH_SHORT).show()
-                                }
-                            )
-                        },
                         onEdit = { showEditDialog = favorite },
                         onDelete = { favoriteToDelete = favorite }
                     )
@@ -320,6 +308,7 @@ fun FavoritesScreen(
     // ⭐ 新增：分享目的地给亲友对话框
     if (showShareDialog && favoriteToShare != null) {
         ShareToGuardianDialog(
+            viewModel = viewModel,  // ⭐ 修复：传入 viewModel
             favorite = favoriteToShare!!,
             homeViewModel = homeViewModel,
             onDismiss = { 
@@ -329,7 +318,8 @@ fun FavoritesScreen(
             onShareSuccess = {
                 showShareDialog = false
                 favoriteToShare = null
-                Toast.makeText(context, "✅ 已发送给亲友，等待代叫车", Toast.LENGTH_LONG).show()
+                // ⭐ 修复：普通用户分享给长辈是添加收藏，不是代叫车
+                Toast.makeText(context, "✅ 已添加到长辈的收藏列表", Toast.LENGTH_LONG).show()
             },
             onShareError = { error ->
                 Toast.makeText(context, "❌ $error", Toast.LENGTH_SHORT).show()
@@ -356,9 +346,11 @@ fun FavoritesScreen(
 
 /**
  * ⭐ 新增：分享目的地给亲友对话框
+ * ⭐ 修复：普通用户分享给长辈，是帮长辈添加收藏，不是代叫车
  */
 @Composable
 private fun ShareToGuardianDialog(
+    viewModel: FavoritesViewModel,  // ⭐ 修复：添加 viewModel 参数
     favorite: FavoriteLocation,
     homeViewModel: com.example.myapplication.presentation.home.HomeViewModel,
     onDismiss: () -> Unit,
@@ -366,12 +358,13 @@ private fun ShareToGuardianDialog(
     onShareError: (String) -> Unit
 ) {
     val context = LocalContext.current
-    val guardians by homeViewModel.guardians.collectAsState()
-    var selectedGuardianId by remember { mutableStateOf<Long?>(null) }
+    // ⭐ 修复：普通用户使用 elderInfoList(长辈列表),不是 guardianInfoList
+    val elders by homeViewModel.elderInfoList.collectAsState()
+    var selectedElderId by remember { mutableStateOf<Long?>(null) }
     
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("选择要发送给哪位亲友") },
+        title = { Text("选择要添加到哪位长辈的收藏") },
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -398,10 +391,10 @@ private fun ShareToGuardianDialog(
                     }
                 }
                 
-                // 亲友列表
-                if (guardians.isEmpty()) {
+                // 长辈列表
+                if (elders.isEmpty()) {
                     Text(
-                        text = "暂无亲友，请先绑定亲友关系",
+                        text = "暂无长辈，请先绑定长辈关系",
                         fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.error,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -412,13 +405,13 @@ private fun ShareToGuardianDialog(
                         modifier = Modifier.heightIn(max = 200.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(guardians) { guardian ->
+                        items(elders) { elder ->
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { selectedGuardianId = guardian.userId },
+                                    .clickable { selectedElderId = elder.userId },
                                 colors = CardDefaults.cardColors(
-                                    containerColor = if (selectedGuardianId == guardian.userId) {
+                                    containerColor = if (selectedElderId == elder.userId) {
                                         MaterialTheme.colorScheme.primaryContainer
                                     } else {
                                         MaterialTheme.colorScheme.surface
@@ -430,18 +423,18 @@ private fun ShareToGuardianDialog(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     RadioButton(
-                                        selected = selectedGuardianId == guardian.userId,
-                                        onClick = { selectedGuardianId = guardian.userId }
+                                        selected = selectedElderId == elder.userId,
+                                        onClick = { selectedElderId = elder.userId }
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Column {
                                         Text(
-                                            text = guardian.realName.ifEmpty { guardian.name },
+                                            text = elder.name,
                                             fontSize = 15.sp,
                                             fontWeight = FontWeight.Medium
                                         )
                                         Text(
-                                            text = guardian.phone,
+                                            text = elder.phone,
                                             fontSize = 13.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -456,18 +449,29 @@ private fun ShareToGuardianDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    if (selectedGuardianId == null) {
-                        Toast.makeText(context, "请选择一位亲友", Toast.LENGTH_SHORT).show()
+                    if (selectedElderId == null) {
+                        Toast.makeText(context, "请选择一位长辈", Toast.LENGTH_SHORT).show()
                         return@Button
                     }
                     favorite.id?.let { favId ->
-                        // TODO: 调用API分享
-                        onShareSuccess()
+                        // ⭐ 调用API添加收藏到长辈列表
+                        viewModel.shareFavoriteToElder(
+                            favoriteId = favId,
+                            elderUserId = selectedElderId!!,
+                            onSuccess = {
+                                Toast.makeText(context, "✅ 已添加到长辈的收藏列表", Toast.LENGTH_LONG).show()
+                                onDismiss()
+                                onShareSuccess()
+                            },
+                            onError = { error: String ->
+                                Toast.makeText(context, "❌ $error", Toast.LENGTH_LONG).show()
+                            }
+                        )
                     }
                 },
-                enabled = selectedGuardianId != null && guardians.isNotEmpty()
+                enabled = selectedElderId != null && elders.isNotEmpty()
             ) {
-                Text("发送")
+                Text("添加到收藏")
             }
         },
         dismissButton = {
@@ -680,7 +684,7 @@ private fun EmptyFavoritesView(
 /**
  * 收藏项卡片
  * 适老化设计：大按钮、清晰布局
- * ⭐ 新增：发送目的地、查看详情、确认到达功能
+ * ⭐ 新增：发送目的地、查看详情功能
  */
 @Composable
 private fun FavoriteItemCard(
@@ -688,7 +692,6 @@ private fun FavoriteItemCard(
     onClick: () -> Unit,
     onSendToGuardian: () -> Unit,
     onViewDetails: () -> Unit,
-    onConfirmArrival: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -744,53 +747,51 @@ private fun FavoriteItemCard(
                 }
             }
             
-            // ⭐ 第二行：主要操作按钮（大按钮，适合长辈）
+            // ⭐ 第二行：主要操作按钮（优化布局）
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // 发送目的地给亲友
+                // 添加到长辈收藏
                 Button(
                     onClick = onSendToGuardian,
-                    modifier = Modifier.weight(1f).height(48.dp),
+                    modifier = Modifier.weight(1f).height(44.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary
-                    )
+                    ),
+                    contentPadding = PaddingValues(horizontal = 8.dp)
                 ) {
-                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("发送目的地", fontSize = 15.sp)
+                    Text(
+                        "分享给长辈",
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
                 }
                 
                 // 查看详情
                 OutlinedButton(
                     onClick = onViewDetails,
-                    modifier = Modifier.weight(1f).height(48.dp)
+                    modifier = Modifier.weight(1f).height(44.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp)
                 ) {
-                    Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("查看详情", fontSize = 15.sp)
+                    Text(
+                        "查看详情",
+                        fontSize = 14.sp,
+                        maxLines = 1
+                    )
                 }
             }
             
-            // ⭐ 第三行：确认到达 + 编辑/删除
+            // 第三行：编辑/删除
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.End
             ) {
-                // 确认到达
-                Button(
-                    onClick = onConfirmArrival,
-                    modifier = Modifier.weight(2f).height(48.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF4CAF50)  // 绿色
-                    )
-                ) {
-                    Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(20.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("✅ 已到达", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                }
-                
                 // 编辑
                 IconButton(
                     onClick = onEdit,

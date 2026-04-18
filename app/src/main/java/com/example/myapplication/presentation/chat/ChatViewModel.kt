@@ -1999,6 +1999,16 @@ class ChatViewModel @Inject constructor(
                     // ⭐ 重要：处理完成后直接返回，不进入 else 分支
                     return
                 }
+                
+                // ⭐ 修复：直接检测亲情守护推送类型（后端可能直接发送 FAVORITE_SHARED/NEW_ORDER 等）
+                response.type?.uppercase() == "FAVORITE_SHARED" ||
+                response.type?.uppercase() == "NEW_ORDER" ||
+                response.type?.uppercase() == "CHAT_MESSAGE" -> {
+                    Log.d("ChatViewModel", "📩 收到亲情守护推送（直接类型）：${response.type}")
+                    Log.d("ChatViewModel", "原始JSON: $json")
+                    handleGuardPushMessage(json)
+                    return
+                }
 
                 else -> {
                     // ⭐ 其他类型消息（如 ping 响应、未知类型等）
@@ -2563,6 +2573,30 @@ class ChatViewModel @Inject constructor(
                         // 目前先记录日志
                     }
                     
+                    "FAVORITE_SHARED" -> {
+                        // ⭐ 新增：处理长辈分享的收藏地点
+                        Log.d("ChatViewModel", "📍 收到长辈分享的收藏地点：${pushMessage.favoriteName}")
+                        
+                        val elderId = pushMessage.senderId
+                        val elderName = pushMessage.proxyUserName ?: "长辈"
+                        val favoriteName = pushMessage.favoriteName ?: "未知地点"
+                        val favoriteAddress = pushMessage.favoriteAddress ?: ""
+                        val favoriteLat = pushMessage.favoriteLatitude ?: 0.0
+                        val favoriteLng = pushMessage.favoriteLongitude ?: 0.0
+                        
+                        // ⭐ 发送通知提醒普通用户
+                        sendFavoriteSharedNotification(
+                            elderId = elderId ?: 0L,
+                            elderName = elderName,
+                            favoriteName = favoriteName,
+                            favoriteAddress = favoriteAddress,
+                            favoriteLat = favoriteLat,
+                            favoriteLng = favoriteLng
+                        )
+                        
+                        Log.d("ChatViewModel", "✅ 已发送收藏分享通知")
+                    }
+                    
                     else -> {
                         Log.w("ChatViewModel", "⚠️ 未知的推送类型：${pushMessage.type}")
                     }
@@ -2570,6 +2604,92 @@ class ChatViewModel @Inject constructor(
             } catch (e: Exception) {
                 Log.e("ChatViewModel", "❌ 解析亲情守护推送消息失败", e)
             }
+        }
+    }
+    
+    /**
+     * ⭐ 新增：发送收藏分享通知
+     */
+    private fun sendFavoriteSharedNotification(
+        elderId: Long,
+        elderName: String,
+        favoriteName: String,
+        favoriteAddress: String,
+        favoriteLat: Double = 0.0,  // ⭐ 新增：纬度
+        favoriteLng: Double = 0.0   // ⭐ 新增：经度
+    ) {
+        val appContext = MyApplication.instance  // ⭐ 修复：使用 MyApplication.instance 获取 Context
+        val channelId = "favorite_shared_channel"
+        val channelName = "收藏地点分享"
+        val notificationId = (elderId + System.currentTimeMillis()).toInt()
+        
+        // 检查通知权限（Android 13+）
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            val hasPermission = appContext.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            
+            if (!hasPermission) {
+                Log.w("ChatViewModel", "⚠️ 缺少 POST_NOTIFICATIONS 权限，无法发送通知")
+                return
+            }
+        }
+        
+        // 创建通知渠道
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val channel = android.app.NotificationChannel(
+                channelId,
+                channelName,
+                android.app.NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "长辈分享的收藏地点"
+                setBypassDnd(true)
+                enableLights(true)
+                enableVibration(true)
+                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+            }
+            val manager = appContext.getSystemService(android.app.NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
+        }
+        
+        // ⭐ 创建点击通知后的 Intent - 跳转到与该长辈的聊天界面
+        val intent = android.content.Intent(appContext, com.example.myapplication.MainActivity::class.java).apply {
+            flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("FAVORITE_SHARED_ELDER_ID", elderId)
+            putExtra("FAVORITE_SHARED_ELDER_NAME", elderName)
+            putExtra("FAVORITE_NAME", favoriteName)
+            putExtra("FAVORITE_ADDRESS", favoriteAddress)
+            putExtra("FAVORITE_LAT", favoriteLat)
+            putExtra("FAVORITE_LNG", favoriteLng)
+        }
+        
+        val pendingIntent = android.app.PendingIntent.getActivity(
+            appContext,
+            notificationId,
+            intent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+        
+        // 构建通知
+        val notification = androidx.core.app.NotificationCompat.Builder(appContext, channelId)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("📍 $elderName 分享了一个地点")
+            .setContentText(favoriteName)
+            .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText("$favoriteName\n$favoriteAddress"))
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+            .setCategory(androidx.core.app.NotificationCompat.CATEGORY_MESSAGE)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .setDefaults(androidx.core.app.NotificationCompat.DEFAULT_ALL)
+            .build()
+        
+        try {
+            val manager = appContext.getSystemService(android.app.NotificationManager::class.java)
+            manager.notify(notificationId, notification)
+            Log.d("ChatViewModel", "🔔 已发送收藏分享通知：elderId=$elderId, favorite=$favoriteName")
+        } catch (e: SecurityException) {
+            Log.e("ChatViewModel", "❌ 发送通知失败：缺少权限", e)
+        } catch (e: Exception) {
+            Log.e("ChatViewModel", "❌ 发送通知异常", e)
         }
     }
 }

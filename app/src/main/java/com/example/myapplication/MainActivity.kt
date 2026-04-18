@@ -16,23 +16,34 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Alignment
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -90,12 +101,43 @@ class MainActivity : ComponentActivity() {
     // private val chatViewModel: ChatViewModel by viewModels()
     
     private var _navigateToChat by mutableStateOf(false)
+    
+    /**
+     * ⭐ 新增：处理收藏分享通知点击
+     */
+    private fun handleFavoriteSharedIntent(intent: Intent) {
+        val elderId = intent.getLongExtra("FAVORITE_SHARED_ELDER_ID", -1L)
+        val elderName = intent.getStringExtra("FAVORITE_SHARED_ELDER_NAME")
+        val favoriteName = intent.getStringExtra("FAVORITE_NAME")
+        val favoriteAddress = intent.getStringExtra("FAVORITE_ADDRESS")
+        val favoriteLat = intent.getDoubleExtra("FAVORITE_LAT", 0.0)
+        val favoriteLng = intent.getDoubleExtra("FAVORITE_LNG", 0.0)
+        
+        if (elderId != -1L && elderName != null && favoriteName != null) {
+            Log.d(TAG, "📍 收到收藏分享通知点击：elderId=$elderId, elderName=$elderName, favorite=$favoriteName")
+            
+            // ⭐ 保存信息到 SharedPreferences，等待 NavHost 创建后跳转
+            val prefs = getSharedPreferences("favorite_shared", MODE_PRIVATE)
+            prefs.edit()
+                .putLong("elder_id", elderId)
+                .putString("elder_name", elderName)
+                .putString("favorite_name", favoriteName)
+                .putString("favorite_address", favoriteAddress ?: "")
+                .putFloat("favorite_lat", favoriteLat.toFloat())
+                .putFloat("favorite_lng", favoriteLng.toFloat())
+                .putBoolean("should_navigate", true)
+                .apply()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val navigateToChat = intent.getBooleanExtra("navigate_to_chat", false)
         _navigateToChat = navigateToChat
+        
+        // ⭐ 新增：处理收藏分享通知点击
+        handleFavoriteSharedIntent(intent)
 
         try {
             MapsInitializer.updatePrivacyShow(this, true, true)
@@ -125,9 +167,21 @@ class MainActivity : ComponentActivity() {
                         Log.d("MainActivity", "App started, preparing location")
                     }
 
-                    // ⭐ 关键修复：自动登录逻辑 - 在 composable("main") 内部创建 ViewModel
-                    // 默认从登录页开始，登录后再创建 ViewModel
-                    val startDestination = "login"
+                    // ⭐ 修复：使用 rememberSaveable 保存 startDestination，避免重组时变化
+                    val tokenManager = com.example.myapplication.MyApplication.tokenManager
+                    val startDestination = rememberSaveable {
+                        val token = tokenManager.getToken()
+                        Log.d("MainActivity", "🔍 === 自动登录检查 ===")
+                        Log.d("MainActivity", "   Token: ${if (token != null) "存在" else "null"}")
+                        
+                        if (token != null) {
+                            Log.d("MainActivity", "✅ 检测到本地 Token，自动登录进入主页")
+                            "main"
+                        } else {
+                            Log.d("MainActivity", "❌ 未检测到 Token，显示登录页")
+                            "login"
+                        }
+                    }
                     
                     NavHost(navController = navController, startDestination = startDestination) {
                         composable("login") {
@@ -237,7 +291,28 @@ class MainActivity : ComponentActivity() {
                                     guardianId = contactId,
                                     guardianName = contactName,
                                     onBackClick = { navController.popBackStack() },
-                                    isElderMode = isElderMode
+                                    isElderMode = isElderMode,
+                                    onNavigateToHomeWithDestination = { name, lat, lng ->
+                                        // ⭐ 一键填充到打车界面
+                                        Log.d("MainActivity", "📍 [私聊] 从聊天跳转到首页，目的地：$name")
+                                        
+                                        // 保存目的地信息到 SharedPreferences
+                                        val prefs = context.getSharedPreferences("taxi_destination", android.content.Context.MODE_PRIVATE)
+                                        prefs.edit()
+                                            .putString("destination_name", name)
+                                            .putFloat("destination_lat", lat.toFloat())
+                                            .putFloat("destination_lng", lng.toFloat())
+                                            .putBoolean("should_apply", true)
+                                            .apply()
+                                        
+                                        // ⭐ 修复：通过 NavHostController 返回到 main 路由
+                                        navController.navigate("main") {
+                                            popUpTo(navController.graph.startDestinationId) {
+                                                inclusive = false
+                                            }
+                                            launchSingleTop = true
+                                        }
+                                    }
                                 )
                             } else {
                                 Text("无效的联系人ID")
@@ -339,6 +414,43 @@ fun MyApplicationApp(
             Log.d("MyApplicationApp", "Location synced to ChatViewModel")
         }
     }
+    
+    // ⭐ 新增：处理收藏分享通知点击
+    LaunchedEffect(Unit) {
+        val prefs = context.getSharedPreferences("favorite_shared", android.content.Context.MODE_PRIVATE)
+        val shouldNavigate = prefs.getBoolean("should_navigate", false)
+        
+        if (shouldNavigate) {
+            val elderId = prefs.getLong("elder_id", -1L)
+            val elderName = prefs.getString("elder_name", "")
+            val favoriteName = prefs.getString("favorite_name", "")
+            val favoriteAddress = prefs.getString("favorite_address", "")
+            val favoriteLat = prefs.getFloat("favorite_lat", 0f).toDouble()
+            val favoriteLng = prefs.getFloat("favorite_lng", 0f).toDouble()
+            
+            if (elderId != -1L && !elderName.isNullOrBlank() && !favoriteName.isNullOrBlank()) {
+                Log.d("MyApplicationApp", "📍 处理收藏分享通知，跳转到与 $elderName 的聊天")
+                
+                // 清除标记
+                prefs.edit().putBoolean("should_navigate", false).apply()
+                
+                // ⭐ 修复：将地点信息保存到 SharedPreferences，供 PrivateChatScreen 读取
+                val chatPrefs = context.getSharedPreferences("chat_location_$elderId", android.content.Context.MODE_PRIVATE)
+                chatPrefs.edit()
+                    .putString("location_name", favoriteName)
+                    .putString("location_address", favoriteAddress)
+                    .putFloat("location_lat", favoriteLat.toFloat())
+                    .putFloat("location_lng", favoriteLng.toFloat())
+                    .putLong("timestamp", System.currentTimeMillis())
+                    .apply()
+                
+                Log.d("MyApplicationApp", "💾 已保存地点信息：$favoriteName, lat=$favoriteLat, lng=$favoriteLng")
+                
+                // 跳转到私聊界面
+                navController.navigate("private_chat/$elderId/$elderName")
+            }
+        }
+    }
 
     Scaffold(
         bottomBar = {
@@ -405,9 +517,143 @@ fun MyApplicationApp(
         // ⭐ 修复：将 isElderMode 定义移到 when 之前，确保所有分支都能访问
         val isElderMode by homeViewModel.isElderMode.collectAsStateWithLifecycle()
         
+        // ⭐ 新增：全局代叫车确认弹窗（长辈端在任何界面都能收到）
+        val proxyOrderRequest by homeViewModel.proxyOrderRequest.collectAsStateWithLifecycle()
+        var showGlobalProxyOrderDialog by remember { mutableStateOf(false) }
+        var pendingOrderId by remember { mutableStateOf<Long?>(null) }
+        var requesterName by remember { mutableStateOf("") }
+        var destination by remember { mutableStateOf("") }
+        
+        LaunchedEffect(proxyOrderRequest) {
+            if (isElderMode && proxyOrderRequest != null) {
+                Log.d("MainActivity", "🔔 [全局] 收到代叫车请求：${proxyOrderRequest!!.orderId}")
+                pendingOrderId = proxyOrderRequest!!.orderId
+                requesterName = proxyOrderRequest!!.requesterName
+                destination = proxyOrderRequest!!.destination
+                showGlobalProxyOrderDialog = true
+                
+                // 清除请求，避免重复弹出
+                homeViewModel.clearProxyOrderRequest()
+            }
+        }
+        
+        // ⭐ 修复：在 MainActivity 层级监听 HomeViewModel 的导航事件（无论当前在哪个页面都能响应）
+        LaunchedEffect(Unit) {
+            homeViewModel.events.collect { event ->
+                when (event) {
+                    is com.example.myapplication.presentation.home.HomeViewModel.HomeEvent.NavigateToOrderTracking -> {
+                        Log.d("MainActivity", "🚀 [全局监听] 收到导航事件，前往行程追踪: orderId=${event.orderId}")
+                        // ⭐ 先切换到首页，再跳转到订单追踪页面
+                        currentDestination = "home"
+                        // 延迟一下，确保首页已经渲染
+                        kotlinx.coroutines.delay(300)
+                        navController.navigate("order_tracking/${event.orderId}")
+                    }
+                    else -> {
+                        // 其他事件忽略
+                    }
+                }
+            }
+        }
+        
+        // 全局代叫车确认对话框
+        if (showGlobalProxyOrderDialog && pendingOrderId != null) {
+            AlertDialog(
+                onDismissRequest = {
+                    // 不允许点击外部关闭，必须选择接受或拒绝
+                },
+                title = {
+                    Text(
+                        "🚗 代叫车请求",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            "代叫人：$requesterName",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            "目的地：$destination",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Divider()
+                        Text(
+                            "是否接受此叫车请求？",
+                            fontSize = 16.sp,
+                            color = Color.Gray
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            pendingOrderId?.let { orderId ->
+                                Log.d("MainActivity", "✅ [全局] 长辈接受代叫车：orderId=$orderId")
+                                homeViewModel.confirmProxyOrder(orderId, confirmed = true)
+                                android.widget.Toast.makeText(context, "✅ 已接受叫车请求", android.widget.Toast.LENGTH_LONG).show()
+                            }
+                            showGlobalProxyOrderDialog = false
+                            pendingOrderId = null
+                        },
+                        modifier = Modifier.height(48.dp)
+                    ) {
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("接受", fontSize = 16.sp)
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            pendingOrderId?.let { orderId ->
+                                Log.d("MainActivity", "❌ [全局] 长辈拒绝代叫车：orderId=$orderId")
+                                homeViewModel.confirmProxyOrder(orderId, confirmed = false, rejectReason = "暂时不需要")
+                                android.widget.Toast.makeText(context, "⚠️ 已拒绝叫车请求", android.widget.Toast.LENGTH_LONG).show()
+                            }
+                            showGlobalProxyOrderDialog = false
+                            pendingOrderId = null
+                        },
+                        modifier = Modifier.height(48.dp)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("拒绝", fontSize = 16.sp)
+                    }
+                }
+            )
+        }
+        
         Column(modifier = Modifier.padding(paddingValues)) {
             when (currentDestination) {
                 "home" -> {
+                    // ⭐ 新增：检查是否有待应用的目的地（从聊天界面跳转过来）
+                    LaunchedEffect(Unit) {
+                        val prefs = context.getSharedPreferences("taxi_destination", android.content.Context.MODE_PRIVATE)
+                        val shouldApply = prefs.getBoolean("should_apply", false)
+                        
+                        if (shouldApply) {
+                            val destName = prefs.getString("destination_name", "")
+                            val destLat = prefs.getFloat("destination_lat", 0f).toDouble()
+                            val destLng = prefs.getFloat("destination_lng", 0f).toDouble()
+                            
+                            if (!destName.isNullOrBlank() && destLat != 0.0 && destLng != 0.0) {
+                                Log.d("MyApplicationApp", "📍 应用来自聊天的目的地：$destName")
+                                homeViewModel.setDestinationFromFavorite(destName, destLat, destLng)
+                                
+                                // 清除标记
+                                prefs.edit().putBoolean("should_apply", false).apply()
+                            }
+                        }
+                    }
+                    
                     HomeScreen(
                         viewModel = homeViewModel,
                         chatViewModel = chatViewModel,  // ⭐ 关键修复：传入 chatViewModel，确保 WebSocket 连接
@@ -430,17 +676,35 @@ fun MyApplicationApp(
                     )
                 }
                 "favorites" -> {
-                    // ⭐ 收藏常用地点页面
-                    FavoritesScreen(
-                        viewModel = favoritesViewModel,  // ⭐ 修复：使用顶层创建的 ViewModel，防止 Tab 切换时销毁
-                        homeViewModel = homeViewModel,  // ⭐ 关键修复：传入 homeViewModel，确保位置同步
-                        onNavigateToHomeWithDestination = { name, lat, lng ->
-                            Log.d("MainActivity", "📍 从收藏跳转到首页，目的地：$name, lat=$lat, lng=$lng")
-                            currentDestination = "home"
-                            // ⭐ 通过 HomeViewModel 设置目的地
-                            homeViewModel.setDestinationFromFavorite(name, lat, lng)
-                        }
-                    )
+                    // ⭐ 修复：根据用户角色显示不同的收藏页面
+                    if (isElderMode) {
+                        // 长辈端：适老化设计，语音播报、一键分享、确认到达
+                        com.example.myapplication.presentation.favorites.ElderFavoritesScreen(
+                            viewModel = favoritesViewModel,
+                            homeViewModel = homeViewModel,
+                            onNavigateToHomeWithDestination = { name, lat, lng ->
+                                Log.d("MainActivity", "📍 [长辈端] 从收藏跳转到首页，目的地：$name")
+                                currentDestination = "home"
+                                homeViewModel.setDestinationFromFavorite(name, lat, lng)
+                            },
+                            onNavigateToChat = { guardianId, guardianName ->
+                                // ⭐ 修复：分享成功后自动跳转到与该亲友的聊天界面
+                                Log.d("MainActivity", "💬 [长辈端] 分享成功，跳转到与 $guardianName 的聊天")
+                                navController.navigate("private_chat/$guardianId/$guardianName")
+                            }
+                        )
+                    } else {
+                        // 普通用户端：使用原 FavoritesScreen，支持添加/编辑/删除
+                        FavoritesScreen(
+                            viewModel = favoritesViewModel,
+                            homeViewModel = homeViewModel,
+                            onNavigateToHomeWithDestination = { name, lat, lng ->
+                                Log.d("MainActivity", "📍 [普通用户] 从收藏跳转到首页，目的地：$name")
+                                currentDestination = "home"
+                                homeViewModel.setDestinationFromFavorite(name, lat, lng)
+                            }
+                        )
+                    }
                 }
                 "chat" -> {
                     // ⭐ 新增：收集长辈/亲友列表
@@ -495,13 +759,25 @@ fun MyApplicationApp(
                         onNavigateToOrderList = onNavigateToOrderList,
                         onNavigateToGuardian = {
                             // ⭐ 跳转到亲情守护管理页面
-                            Log.d("MainActivity", "👨‍👩‍👧 === 点击亲情守护，跳转至 GuardianManagementScreen ===")
+                            Log.d("MainActivity", "👨‍👩‍ === 点击亲情守护，跳转至 GuardianManagementScreen ===")
                             currentDestination = "guardian_management"
                         },
                         onNavigateToAccount = {
                             // ⭐ 跳转到账号安全页面
                             Log.d("MainActivity", "🔒 === 点击账号安全，跳转至 AccountSecurityScreen ===")
                             currentDestination = "account_security"
+                        },
+                        onNavigateToTravelRecords = {
+                            // ⭐ 跳转到出行记录页面
+                            Log.d("MainActivity", "🚗 === 点击出行记录，跳转至 TravelRecordsScreen ===")
+                            currentDestination = "travel_records"
+                        },
+                        onLogout = {
+                            // ⭐ 修复：退出登录后返回登录页面
+                            Log.d("MainActivity", "🚪 === 退出登录，返回登录页面 ===")
+                            navController.navigate("login") {
+                                popUpTo("main") { inclusive = true }
+                            }
                         }
                     )
                 }
@@ -514,6 +790,13 @@ fun MyApplicationApp(
                 "account_security" -> {
                     // ⭐ 账号安全页面
                     com.example.myapplication.presentation.account.AccountSecurityScreen(
+                        onNavigateBack = { currentDestination = "profile" }
+                    )
+                }
+                "travel_records" -> {
+                    // ⭐ 出行记录页面(行程凭证)
+                    com.example.myapplication.presentation.favorites.TravelRecordsScreen(
+                        viewModel = favoritesViewModel,
                         onNavigateBack = { currentDestination = "profile" }
                     )
                 }
