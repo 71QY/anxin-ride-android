@@ -194,7 +194,9 @@ fun ChatScreen(
             
             if (!hasTutorialMessage) {
                 hasSentWelcomeTutorial = true
-                val tutorialMessage = if (effectiveElderMode) {
+                // ⭐ 修复：优先使用传入的参数，其次使用 ViewModel 中的状态
+                val isElder = effectiveElderMode || isElderModeState
+                val tutorialMessage = if (isElder) {
                     "👴 长辈端使用指南：\n" +
                     "\n" +
                     "✅ 您可以：\n" +
@@ -658,8 +660,8 @@ fun ChatScreen(
                     }
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Mic,
-                        contentDescription = "语音",
+                        imageVector = if (isListening) Icons.Default.MicOff else Icons.Default.Mic,
+                        contentDescription = if (isListening) "停止录音（再次点击）" else "语音输入",
                         tint = if (isListening) Color.Red else MaterialTheme.colorScheme.onSurface  // ⭐ 录音中显示红色
                     )
                 }

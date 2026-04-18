@@ -1,17 +1,23 @@
 package com.example.myapplication.presentation.favorites
 
+import android.content.Context
+import android.speech.tts.TextToSpeech
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.amap.api.maps.model.LatLng
 import com.example.myapplication.core.network.ApiService
 import com.example.myapplication.data.model.FavoriteLocation
 import com.example.myapplication.data.model.PoiResponse
 import com.example.myapplication.data.model.SaveFavoriteRequest
+import com.example.myapplication.data.model.ShareFavoriteRequest  // ⭐ 新增：分享收藏请求
+import com.example.myapplication.data.model.ConfirmArrivalRequest  // ⭐ 新增：确认到达请求
 import com.example.myapplication.data.repository.FavoritesRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import java.util.Locale
 import javax.inject.Inject
 
 /**
@@ -25,6 +31,10 @@ class FavoritesViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val TAG = "FavoritesViewModel"
+
+    // ⭐ 新增：TTS语音播报
+    private var textToSpeech: TextToSpeech? = null
+    private var ttsInitialized = false
 
     // 收藏列表状态
     private val _favorites = MutableStateFlow<List<FavoriteLocation>>(emptyList())
@@ -53,6 +63,73 @@ class FavoritesViewModel @Inject constructor(
     // ⭐ 新增：从首页传来的待添加 POI
     private val _poiForAdd = MutableStateFlow<Triple<String, Double, Double>?>(null)
     val poiForAdd: StateFlow<Triple<String, Double, Double>?> = _poiForAdd
+    
+    // ⭐ 新增：当前位置（用于搜索）
+    private val _currentLocation = MutableStateFlow<LatLng?>(null)
+    val currentLocation: StateFlow<LatLng?> = _currentLocation
+    
+    // ⭐ 新增：搜索任务引用，用于取消之前的搜索
+    private var searchJob: kotlinx.coroutines.Job? = null
+    
+    // ⭐ 新增：搜索防抖延迟（毫秒）
+    private val SEARCH_DEBOUNCE_MS = 500L
+
+    /**
+     * ⭐ 初始化TTS语音播报
+     */
+    fun initTTS(context: Context) {
+        if (textToSpeech != null) return
+        
+        textToSpeech = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                val result = textToSpeech?.setLanguage(Locale.CHINESE)
+                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    Log.e(TAG, "❌ TTS不支持中文")
+                    ttsInitialized = false
+                } else {
+                    Log.d(TAG, "✅ TTS初始化成功")
+                    ttsInitialized = true
+                }
+            } else {
+                Log.e(TAG, "❌ TTS初始化失败")
+                ttsInitialized = false
+            }
+        }
+    }
+
+    /**
+     * ⭐ 语音播报地点信息
+     */
+    fun speakLocationInfo(name: String, address: String, phone: String? = null) {
+        if (!ttsInitialized) {
+            Log.w(TAG, "⚠️ TTS未初始化，无法播报")
+            return
+        }
+        
+        val message = buildString {
+            append("这是$name")
+            append("，地址：$address")
+            phone?.let {
+                if (it.isNotEmpty()) {
+                    append("，电话：$it")
+                }
+            }
+        }
+        
+        Log.d(TAG, "🔊 语音播报：$message")
+        textToSpeech?.speak(message, TextToSpeech.QUEUE_FLUSH, null, null)
+    }
+
+    /**
+     * ⭐ 释放TTS资源
+     */
+    override fun onCleared() {
+        super.onCleared()
+        textToSpeech?.stop()
+        textToSpeech?.shutdown()
+        textToSpeech = null
+        Log.d(TAG, "♻️ TTS资源已释放")
+    }
 
     /**
      * 刷新收藏列表
@@ -238,9 +315,21 @@ class FavoritesViewModel @Inject constructor(
         _poiForAdd.value = null
     }
     
-    // ⭐ 新增：搜索 POI（使用与首页相同的搜索策略）
+    // ⭐ 新增：更新当前位置（用于搜索）
+    fun updateCurrentLocation(lat: Double, lng: Double) {
+        _currentLocation.value = LatLng(lat, lng)
+        Log.d(TAG, "📍 更新当前位置：lat=$lat, lng=$lng")
+    }
+    
+    // ⭐ 新增：搜索 POI（使用与首页完全相同的搜索策略）
     fun searchPoi(keyword: String, lat: Double? = null, lng: Double? = null) {
-        viewModelScope.launch {
+        // ⭐ 关键修复：取消之前的搜索任务，实现防抖
+        searchJob?.cancel()
+        
+        searchJob = viewModelScope.launch {
+            // ⭐ 防抖延迟：等待用户停止输入 500ms 后再搜索
+            kotlinx.coroutines.delay(SEARCH_DEBOUNCE_MS)
+            
             if (keyword.isBlank()) {
                 _searchResults.value = emptyList()
                 _searchKeyword.value = ""
@@ -257,78 +346,133 @@ class FavoritesViewModel @Inject constructor(
                 // ⭐ 修复：简化关键词，去除"校区"、"区"等后缀
                 val simplifiedKeyword = keyword.replace(Regex("(校区|区|分校|分院)$"), "")
                 
-                // ⭐ 修复：优先使用周边搜索，失败后降级全国搜索
-                var searchSuccess = false
+                // ✅ 修复：收藏页面使用与首页相同的搜索逻辑
+                // 1. 如果有定位坐标，优先使用 searchDestination（后端推荐）
+                // 2. 失败后降级到 searchNearby
+                // 3. 都没有结果才尝试全国搜索
                 
-                // 第一步：尝试周边搜索
-                if (lat != null && lng != null && lat != 0.0 && lng != 0.0) {
-                    Log.d(TAG, "🔍 第一步：尝试周边搜索（lat=$lat, lng=$lng）")
-                    val nearbyResult = apiService.searchNearby(
+                // ⭐ 修复：使用 ViewModel 内部的当前位置
+                val location = _currentLocation.value
+                val useLat = lat ?: location?.latitude
+                val useLng = lng ?: location?.longitude
+                
+                if (useLat != null && useLng != null) {
+                    Log.d(TAG, "📍 有定位坐标，使用周边搜索模式")
+                    Log.d(TAG, "  - 坐标：lat=$useLat, lng=$useLng")
+                    
+                    // 第一步：调用 searchDestination（主页搜索框推荐）
+                    Log.d(TAG, "🔍 调用 searchDestination 接口")
+                    val result = apiService.searchDestination(
                         keyword = simplifiedKeyword,
-                        lat = lat,
-                        lng = lng,
-                        page = 1,
-                        pageSize = 20,
-                        radius = 50000,
-                        nationwide = false
+                        lat = useLat,
+                        lng = useLng
                     )
                     
-                    if (nearbyResult.isSuccess() && !nearbyResult.data.isNullOrEmpty()) {
-                        _searchResults.value = nearbyResult.data!!
-                        Log.d(TAG, "✅ 周边搜索成功：${_searchResults.value.size} 个结果")
-                        searchSuccess = true
-                    } else {
-                        Log.w(TAG, "⚠️ 周边搜索无结果，尝试全国搜索")
-                    }
-                } else {
-                    Log.d(TAG, "🌍 无定位坐标，跳过周边搜索，直接全国搜索")
-                }
-                
-                // 第二步：如果周边搜索失败，使用全国搜索
-                if (!searchSuccess) {
-                    Log.d(TAG, "🌍 第二步：使用全国搜索模式")
+                    Log.d(TAG, "📥 searchDestination 响应: code=${result.code}, data size=${result.data?.size}")
                     
-                    // ⭐ 修复：全国搜索也尝试 searchNearby（lat=0, lng=0），因为 searchPoiNationwide 可能不工作
-                    val nationwideResult = apiService.searchNearby(
+                    if (result.isSuccess() && !result.data.isNullOrEmpty()) {
+                        _searchResults.value = result.data!!
+                        Log.d(TAG, "✅ searchDestination 成功：${_searchResults.value.size} 个结果")
+                        result.data!!.forEachIndexed { index, poi ->
+                            Log.d(TAG, "  [$index] ${poi.name} - ${poi.address} (${poi.distance}m)")
+                        }
+                        _isSearching.value = false
+                        return@launch
+                    } else {
+                        Log.w(TAG, "⚠️ searchDestination 无结果，尝试 searchNearby")
+                        
+                        // 第二步：降级到 searchNearby
+                        val fallbackResult = apiService.searchNearby(
+                            keyword = simplifiedKeyword,
+                            lat = useLat,
+                            lng = useLng,
+                            page = 1,
+                            pageSize = 20,
+                            radius = 5000
+                        )
+                        
+                        Log.d(TAG, "📥 searchNearby 响应: code=${fallbackResult.code}, data size=${fallbackResult.data?.size}")
+                        
+                        if (fallbackResult.isSuccess() && !fallbackResult.data.isNullOrEmpty()) {
+                            _searchResults.value = fallbackResult.data!!
+                            Log.d(TAG, "✅ searchNearby 成功：${_searchResults.value.size} 个结果")
+                            fallbackResult.data!!.forEachIndexed { index, poi ->
+                                Log.d(TAG, "  [$index] ${poi.name} - ${poi.address} (${poi.distance}m)")
+                            }
+                            _isSearching.value = false
+                            return@launch
+                        }
+                    }
+                    
+                    // 第三步：周边搜索都失败，尝试全国搜索
+                    Log.w(TAG, "⚠️ 周边搜索无结果，切换到全国搜索")
+                    val nationwideResult = apiService.searchPoiNationwide(
                         keyword = simplifiedKeyword,
-                        lat = 0.0,
-                        lng = 0.0,
+                        lat = null,
+                        lng = null,
                         page = 1,
                         pageSize = 20,
-                        radius = 50000,
                         nationwide = true
                     )
+                    
+                    Log.d(TAG, "📥 searchPoiNationwide 响应: code=${nationwideResult.code}, data size=${nationwideResult.data?.size}")
                     
                     if (nationwideResult.isSuccess() && !nationwideResult.data.isNullOrEmpty()) {
                         _searchResults.value = nationwideResult.data!!
                         Log.d(TAG, "✅ 全国搜索成功：${_searchResults.value.size} 个结果")
-                    } else {
-                        // 如果 searchNearby 失败，再尝试 searchPoiNationwide
-                        Log.w(TAG, "⚠️ searchNearby 全国模式失败，尝试 searchPoiNationwide")
-                        val fallbackResult = apiService.searchPoiNationwide(
-                            keyword = simplifiedKeyword,
-                            lat = null,
-                            lng = null,
-                            page = 1,
-                            pageSize = 20,
-                            nationwide = true
-                        )
-                        
-                        if (fallbackResult.isSuccess() && !fallbackResult.data.isNullOrEmpty()) {
-                            _searchResults.value = fallbackResult.data!!
-                            Log.d(TAG, "✅ searchPoiNationwide 成功：${_searchResults.value.size} 个结果")
-                        } else {
-                            _errorMessage.value = "未找到相关地点，请换一个关键词试试"
-                            _searchResults.value = emptyList()
-                            Log.e(TAG, "❌ 所有搜索接口都失败")
+                        nationwideResult.data!!.forEachIndexed { index, poi ->
+                            Log.d(TAG, "  [$index] ${poi.name} - ${poi.address}")
                         }
+                    } else {
+                        _errorMessage.value = "未找到相关地点，请换一个关键词试试"
+                        _searchResults.value = emptyList()
+                        Log.e(TAG, "❌ 所有搜索方式都无结果")
+                    }
+                } else {
+                    // 没有定位坐标，直接全国搜索
+                    Log.w(TAG, "⚠️ 没有定位坐标，直接使用全国搜索")
+                    val result = apiService.searchPoiNationwide(
+                        keyword = simplifiedKeyword,
+                        lat = null,
+                        lng = null,
+                        page = 1,
+                        pageSize = 20,
+                        nationwide = true
+                    )
+                    
+                    Log.d(TAG, "📥 全国搜索响应: code=${result.code}, data size=${result.data?.size}")
+                    
+                    if (result.isSuccess() && !result.data.isNullOrEmpty()) {
+                        _searchResults.value = result.data!!
+                        Log.d(TAG, "✅ 全国搜索成功：${_searchResults.value.size} 个结果")
+                        result.data!!.forEachIndexed { index, poi ->
+                            Log.d(TAG, "  [$index] ${poi.name} - ${poi.address}")
+                        }
+                    } else {
+                        _errorMessage.value = "未找到相关地点，请换一个关键词试试"
+                        _searchResults.value = emptyList()
+                        Log.e(TAG, "❌ 全国搜索无结果")
                     }
                 }
             } catch (e: Exception) {
-                _errorMessage.value = e.message ?: "网络异常"
-                Log.e(TAG, "❌ 搜索异常", e)
+                // ⭐ 修复：忽略请求取消异常，避免闪退
+                val errorMsg = e.message ?: ""
+                if (errorMsg.contains("canceled", ignoreCase = true) || 
+                    errorMsg.contains("closed", ignoreCase = true) ||
+                    e is java.util.concurrent.CancellationException) {
+                    Log.w(TAG, "⚠️ 搜索请求被取消或协程被取消，安全忽略")
+                    _errorMessage.value = null
+                } else {
+                    _errorMessage.value = e.message ?: "网络异常"
+                    Log.e(TAG, "❌ 搜索异常", e)
+                }
             } finally {
-                _isSearching.value = false
+                // ⭐ 确保 finally 块不会抛出异常
+                try {
+                    _isSearching.value = false
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ finally 块异常", e)
+                }
             }
         }
     }
@@ -337,5 +481,69 @@ class FavoritesViewModel @Inject constructor(
     fun clearSearchResults() {
         _searchResults.value = emptyList()
         _searchKeyword.value = ""
+    }
+    
+    /**
+     * ⭐ 新增：分享收藏地点给亲友（通过WebSocket）
+     */
+    fun shareFavoriteToGuardian(
+        favoriteId: Long,
+        guardianUserId: Long,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                Log.d(TAG, "📤 分享收藏地点给亲友：favoriteId=$favoriteId, guardianUserId=$guardianUserId")
+                
+                // 调用后端API分享
+                val result = apiService.shareFavoriteToGuardian(favoriteId, guardianUserId)
+                
+                if (result.isSuccess()) {
+                    Log.d(TAG, "✅ 分享成功")
+                    onSuccess()
+                } else {
+                    val errorMsg = result.message ?: "分享失败"
+                    Log.e(TAG, "❌ 分享失败：$errorMsg")
+                    onError(errorMsg)
+                }
+            } catch (e: Exception) {
+                val errorMsg = e.message ?: "网络异常"
+                Log.e(TAG, "❌ 分享异常", e)
+                onError(errorMsg)
+            }
+        }
+    }
+    
+    /**
+     * ⭐ 新增：确认到达目的地（通过WebSocket通知亲友）
+     */
+    fun confirmArrival(
+        favoriteId: Long,
+        orderId: Long? = null,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                Log.d(TAG, "✅ 确认到达：favoriteId=$favoriteId, orderId=$orderId")
+                
+                // 调用后端API确认到达
+                val result = apiService.confirmArrival(favoriteId, orderId)
+                
+                if (result.isSuccess()) {
+                    Log.d(TAG, "✅ 确认到达成功，已通知亲友")
+                    onSuccess()
+                } else {
+                    val errorMsg = result.message ?: "确认到达失败"
+                    Log.e(TAG, "❌ 确认到达失败：$errorMsg")
+                    onError(errorMsg)
+                }
+            } catch (e: Exception) {
+                val errorMsg = e.message ?: "网络异常"
+                Log.e(TAG, "❌ 确认到达异常", e)
+                onError(errorMsg)
+            }
+        }
     }
 }

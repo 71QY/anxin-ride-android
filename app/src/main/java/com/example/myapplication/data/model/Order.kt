@@ -8,7 +8,7 @@ import kotlinx.serialization.SerialName
 data class Order(
     @SerialName("id") val id: Long,
     @SerialName("orderNo") val orderNo: String,
-    @SerialName("status") val status: Int,  // ⭐ 0-待确认 1-已确认 2-等待司机 3-司机已接单 4-行程中 5-已完成 6-已取消 7-已拒绝
+    @SerialName("status") val status: Int,  // ⭐ 0-待确认 1-已确认 2-等待司机 3-司机已接单 4-司机已到达 5-行程中 6-已完成 7-已取消 8-已拒绝
     @SerialName("userId") val userId: Long?,
     @SerialName("driverId") val driverId: Long?,
     @SerialName("guardianUserId") val guardianUserId: Long? = null,  // ⭐ 新增：代叫人ID（亲友）
@@ -50,10 +50,11 @@ data class Order(
             1 -> "已确认"
             2 -> "等待司机接单"
             3 -> "司机已接单"
-            4 -> "行程中"
-            5 -> "已完成"
-            6 -> "已取消"
-            7 -> "已拒绝"
+            4 -> "司机已到达"  // ⭐ 修复：状态4是司机已到达，不是行程中
+            5 -> "行程中"      // ⭐ 修复：状态5是行程中，不是已完成
+            6 -> "已完成"      // ⭐ 修复：状态6是已完成，不是已取消
+            7 -> "已取消"      // ⭐ 修复：状态7是已取消
+            8 -> "已拒绝"      // ⭐ 修复：状态8是已拒绝
             else -> "未知状态"
         }
     }

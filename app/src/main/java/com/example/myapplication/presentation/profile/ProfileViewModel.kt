@@ -9,7 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.myapplication.MyApplication
 import com.example.myapplication.core.datastore.TokenManager
 import com.example.myapplication.core.network.ApiService
-import com.example.myapplication.core.utils.AppIconSwitcher
+// ⭐ 修复：移除 AppIconSwitcher 导入，图标切换由 LoginViewModel 负责
 import com.example.myapplication.data.model.ChangePasswordRequest
 import com.example.myapplication.data.model.EmergencyContact
 import com.example.myapplication.data.model.RealNameRequest
@@ -247,9 +247,8 @@ class ProfileViewModel @Inject constructor(
                     Log.d("ProfileViewModel", "  Real name: ${profileData?.realName}")
                     Log.d("ProfileViewModel", "  Verified status: verified=${profileData?.verified}")
                     Log.d("ProfileViewModel", "  Guard mode: guardMode=${profileData?.guardMode}")
-                    // ⭐ 新增：根据 guardMode 切换应用图标
-                    val guardMode = profileData?.guardMode ?: 0
-                    AppIconSwitcher.switchIconByGuardMode(context, guardMode)
+                    // ⭐ 修复：移除图标切换逻辑，避免 Activity 重建
+                    // 图标切换仅在登录成功后由 LoginViewModel 执行
                     // ⭐ 重置认证失败标志
                     _authFailure.value = false
                 } else {
@@ -1297,13 +1296,19 @@ class ProfileViewModel @Inject constructor(
                     // 即使后端接口失败，也要继续清除本地数据
                 }
                 
-                // ⭐ 3. 清除本地 Token 和 guardMode
+                // ⭐ 3. 清除本地 Token、user_id 和 guardMode
                 tokenManager.clearToken()
-                Log.d("ProfileViewModel", "已清除本地 Token 和 guardMode")
+                // ⭐ 修复：退出登录时需要显式清除 user_id 和 guardMode
+                tokenManager.saveGuardMode(0)
+                // ⭐ 新增：直接清除 user_id（clearToken 不再清除 user_id）
+                val prefs = context.getSharedPreferences("auth_prefs", android.content.Context.MODE_PRIVATE)
+                prefs.edit().remove("user_id").apply()
+                Log.d("ProfileViewModel", "已清除本地 Token、user_id 和 guardMode")
                 
-                // ⭐ 3.1 退出登录后切换回默认图标
-                AppIconSwitcher.switchToDefaultIcon(context)
-                Log.d("ProfileViewModel", "已切换回默认图标")
+                // ⭐ 修复：退出登录时不切换图标，避免 Activity 重建
+                // 图标将在下次启动时根据本地状态自动恢复
+                // AppIconSwitcher.switchToDefaultIcon(context)  // 已注释
+                Log.d("ProfileViewModel", "退出登录，保留当前图标状态")
                 
                 // ⭐ 4. 重置所有状态
                 _profile.value = null
@@ -1339,8 +1344,12 @@ class ProfileViewModel @Inject constructor(
                 // ⭐ 即使异常也要尝试清除本地数据
                 try {
                     tokenManager.clearToken()
-                    // ⭐ 异常时也切换回默认图标
-                    AppIconSwitcher.switchToDefaultIcon(context)
+                    // ⭐ 修复：退出登录时需要显式清除 user_id 和 guardMode
+                    tokenManager.saveGuardMode(0)
+                    val prefs = context.getSharedPreferences("auth_prefs", android.content.Context.MODE_PRIVATE)
+                    prefs.edit().remove("user_id").apply()
+                    // ⭐ 修复：异常时也不切换图标，避免 Activity 重建
+                    // AppIconSwitcher.switchToDefaultIcon(context)  // 已注释
                     onLogoutComplete()
                 } catch (e2: Exception) {
                     Log.e("ProfileViewModel", "清除本地数据也失败", e2)
@@ -1433,11 +1442,10 @@ class ProfileViewModel @Inject constructor(
                     return@launch
                 }
                 
-                // ⭐ 注意：这里需要验证码，但简化版暂时跳过验证码校验
-                // TODO: 后续可以添加发送验证码的功能
+                // ⭐ 修复：必须使用用户输入的验证码，禁止硬编码
                 val request = ChangePasswordRequest(
                     phone = phone,
-                    code = "123456",  // ⚠️ 临时方案：使用固定验证码，后端需要支持免验证码修改
+                    code = _codeInput.value,  // ✅ 使用用户输入的验证码
                     newPassword = newPassword
                 )
                 

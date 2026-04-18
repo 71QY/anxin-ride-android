@@ -84,8 +84,10 @@ class MainActivity : ComponentActivity() {
     
     private var hasRequestedPermission = false
     
-    private val homeViewModel: HomeViewModel by viewModels()
-    private val chatViewModel: ChatViewModel by viewModels()
+    // ⭐ 修复：移除 by viewModels()，改为在 MyApplicationApp 中使用 hiltViewModel()
+    // 原因：by viewModels() 在 Activity 级别创建，导航时可能被销毁
+    // private val homeViewModel: HomeViewModel by viewModels()
+    // private val chatViewModel: ChatViewModel by viewModels()
     
     private var _navigateToChat by mutableStateOf(false)
 
@@ -123,16 +125,9 @@ class MainActivity : ComponentActivity() {
                         Log.d("MainActivity", "App started, preparing location")
                     }
 
-                    // ⭐ 关键修复：自动登录逻辑 - 同步获取 userId
-                    val syncUserId = homeViewModel.getUserIdSync()
-                    val hasValidToken = syncUserId != null
-                    val startDestination = if (hasValidToken) "main" else "login"
-                    
-                    Log.d("MainActivity", "🔍 === 自动登录检查 ===")
-                    Log.d("MainActivity", "🔍 getUserIdSync()=$syncUserId")
-                    Log.d("MainActivity", "🔍 hasValidToken=$hasValidToken")
-                    Log.d("MainActivity", "🔍 startDestination=$startDestination")
-                    Log.d("MainActivity", "🔍 ====================")
+                    // ⭐ 关键修复：自动登录逻辑 - 在 composable("main") 内部创建 ViewModel
+                    // 默认从登录页开始，登录后再创建 ViewModel
+                    val startDestination = "login"
                     
                     NavHost(navController = navController, startDestination = startDestination) {
                         composable("login") {
@@ -142,6 +137,8 @@ class MainActivity : ComponentActivity() {
                                     navController.navigate("main") {
                                         popUpTo("login") { inclusive = true }
                                     }
+
+
                                 },
                                 onRequestFloatPermission = {
                                 }
@@ -149,6 +146,10 @@ class MainActivity : ComponentActivity() {
                         }
                         composable("main") {
                             val context = LocalContext.current
+                            
+                            // ⭐ 关键修复：在 NavGraph 作用域内创建 ViewModel，确保生命周期与路由绑定
+                            val homeViewModel: HomeViewModel = androidx.hilt.navigation.compose.hiltViewModel()
+                            val chatViewModel: ChatViewModel = androidx.hilt.navigation.compose.hiltViewModel()
                             
                             LaunchedEffect(Unit) {
                                 Log.d("MainActivity", "Starting to monitor location changes")
@@ -226,6 +227,9 @@ class MainActivity : ComponentActivity() {
                         composable("private_chat/{contactId}/{contactName}") { backStackEntry ->
                             val contactId = backStackEntry.arguments?.getString("contactId")?.toLongOrNull()
                             val contactName = backStackEntry.arguments?.getString("contactName") ?: "未知"
+                            
+                            // ⭐ 修复：在 NavGraph 作用域内创建 ViewModel
+                            val homeViewModel: HomeViewModel = androidx.hilt.navigation.compose.hiltViewModel()
                             val isElderMode by homeViewModel.isElderMode.collectAsStateWithLifecycle()  // ⭐ 修复：使用 collectAsStateWithLifecycle
                             
                             if (contactId != null) {
@@ -293,6 +297,9 @@ fun MyApplicationApp(
 ) {
     var currentDestination by rememberSaveable { mutableStateOf<String?>("home") }
     val context = LocalContext.current
+    
+    // ⭐ 修复：在顶层创建 ViewModel，确保 Tab 切换时 ViewModel 不销毁
+    val favoritesViewModel: com.example.myapplication.presentation.favorites.FavoritesViewModel = androidx.hilt.navigation.compose.hiltViewModel()
     
     // ⭐ 新增：返回主页的回调函数（本地定义）
     val localOnBackToHome = {
@@ -395,6 +402,9 @@ fun MyApplicationApp(
             }
         }
     ) { paddingValues ->
+        // ⭐ 修复：将 isElderMode 定义移到 when 之前，确保所有分支都能访问
+        val isElderMode by homeViewModel.isElderMode.collectAsStateWithLifecycle()
+        
         Column(modifier = Modifier.padding(paddingValues)) {
             when (currentDestination) {
                 "home" -> {
@@ -422,6 +432,8 @@ fun MyApplicationApp(
                 "favorites" -> {
                     // ⭐ 收藏常用地点页面
                     FavoritesScreen(
+                        viewModel = favoritesViewModel,  // ⭐ 修复：使用顶层创建的 ViewModel，防止 Tab 切换时销毁
+                        homeViewModel = homeViewModel,  // ⭐ 关键修复：传入 homeViewModel，确保位置同步
                         onNavigateToHomeWithDestination = { name, lat, lng ->
                             Log.d("MainActivity", "📍 从收藏跳转到首页，目的地：$name, lat=$lat, lng=$lng")
                             currentDestination = "home"
@@ -432,7 +444,6 @@ fun MyApplicationApp(
                 }
                 "chat" -> {
                     // ⭐ 新增：收集长辈/亲友列表
-                    val isElderMode by homeViewModel.isElderMode.collectAsStateWithLifecycle()
                     val guardianList by homeViewModel.guardianInfoList.collectAsStateWithLifecycle()
                     val elderList by homeViewModel.elderInfoList.collectAsStateWithLifecycle()
                     
@@ -471,6 +482,7 @@ fun MyApplicationApp(
                             navController.navigate("order_tracking/$orderId")
                         },
                         chatMode = ChatMode.AGENT,
+                        isElderMode = isElderMode,  // ⭐ 修复：传递长辈模式状态
                         showBackButton = true,  // ⭐ 新增：显示返回按钮
                         onBackClick = { 
                             // ⭐ 修复：从智能体助手返回到聊天列表页

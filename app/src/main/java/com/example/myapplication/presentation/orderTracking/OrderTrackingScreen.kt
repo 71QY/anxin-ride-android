@@ -46,6 +46,7 @@ import com.amap.api.maps.model.BitmapDescriptorFactory
 import com.amap.api.maps.model.LatLng
 import com.amap.api.maps.model.MarkerOptions
 import com.amap.api.maps.model.PolylineOptions
+import com.example.myapplication.R
 import com.example.myapplication.map.MapViewComposable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -114,17 +115,19 @@ fun OrderTrackingScreen(
         driverLocation?.let { location ->
             aMap?.let { map ->
                 if (driverMarker == null) {
-                    // ⭐ 创建司机标记 - 使用蓝色小车图标
+                    // ⭐ 修复：使用小尺寸图标，与定位图标保持一致
                     android.util.Log.d("OrderTrackingScreen", "🚕 创建司机标记：lat=${location.latitude}, lng=${location.longitude}")
                     
                     driverMarker = map.addMarker(
                         MarkerOptions()
                             .position(location)
                             .icon(BitmapDescriptorFactory.fromResource(
-                                android.R.drawable.ic_menu_directions  // ⭐ 使用方向图标，更像小车
+                                R.drawable.ic_driver_tracking  // ⭐ 修复：使用新的司机追踪图标
                             ))
+                            .anchor(0.5f, 1.0f)  // ⭐ 修复：锚点改为底部中心，让车标底部对准位置
                             .title("司机位置")
                             .snippet("正在赶来中")
+                            .zIndex(10f)  // ⭐ 新增：设置较高的 z-index，确保不被其他元素覆盖
                     )
                     android.util.Log.d("OrderTrackingScreen", "✅ 司机标记创建成功")
                 } else {
@@ -267,6 +270,17 @@ fun OrderTrackingScreen(
                         onCancelOrder = {
                             // ⭐ 修复：显示确认对话框
                             showCancelConfirmDialog = true
+                        },
+                        // ⭐ 新增：乘客上车（触发行程开始）
+                        onBoardCar = {
+                            scope.launch {
+                                val result = viewModel.startTrip(orderId)
+                                if (result) {
+                                    Toast.makeText(context, "✅ 乘客已上车，行程开始", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "❌ 开始行程失败", Toast.LENGTH_SHORT).show()
+                                }
+                            }
                         }
                     )
                 }
@@ -470,35 +484,37 @@ private fun OrderTrackingContent(
     aMap: AMap?,
     onMapReady: (AMap) -> Unit,
     onCallDriver: () -> Unit,
-    onCancelOrder: () -> Unit
+    onCancelOrder: () -> Unit,
+    onBoardCar: () -> Unit  // ⭐ 乘客上车
 ) {
     Column(
         modifier = Modifier.fillMaxSize()
     ) {
-        // 1. 地图区域（占60%，给用户更多空间看到地图）
+        // 1. 地图区域（固定权重，让地图有足够空间）
         MapViewComposable(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(0.6f),
+                .weight(0.55f),
             onMapReady = onMapReady,
             onMapClick = {},
             onPoiClick = {}
         )
 
-        // 2. 底部信息面板（占40%，让用户看到更多内容）
+        // 2. 底部信息面板（权重增加，确保内容可完整显示）
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(0.4f),
+                .weight(1f),
             shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
             shadowElevation = 8.dp,
             color = Color.White
         ) {
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
+                    .padding(16.dp)
+                    .padding(bottom = 32.dp),  // ⭐ 增加底部留白，确保按钮完全可见
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // 状态条
@@ -524,9 +540,12 @@ private fun OrderTrackingContent(
 
                 // 操作按钮
                 ActionButtons(
+                    orderStatus = order.status,  // ⭐ 新增：传入订单状态
+                    etaMinutes = etaMinutes,  // ⭐ 新增：传入 ETA
                     canCancel = order.status <= 2,  // ⭐ 修复：允许在司机接单前取消（状态0-2）
                     onCancelOrder = onCancelOrder,
-                    onCallDriver = onCallDriver
+                    onCallDriver = onCallDriver,
+                    onBoardCar = onBoardCar  // ⭐ 乘客上车
                 )
             }
         }
@@ -539,10 +558,11 @@ private fun StatusBanner(status: Int, etaMinutes: Int?) {
         0 -> Triple("派单中", Color(0xFFFF9800), Icons.Default.CarCrash)
         1 -> Triple("待接单", Color(0xFF2196F3), Icons.Default.CarCrash)
         2, 3 -> Triple("已接单 - 司机赶来中", Color(0xFF2196F3), Icons.Default.DirectionsCar)
-        4 -> Triple("已到达 - 请上车", Color(0xFF4CAF50), Icons.Default.CheckCircle)
-        5 -> Triple("行程中", Color(0xFF9C27B0), Icons.Default.DirectionsCar)
-        6 -> Triple("已取消", Color.Gray, Icons.Default.CarCrash)
-        7 -> Triple("已拒绝", Color.Red, Icons.Default.CarCrash)
+        4 -> Triple("司机已到达 - 请上车", Color(0xFF4CAF50), Icons.Default.CheckCircle)  // ⭐ 修改：更清晰的提示
+        5 -> Triple("行程中 - 前往目的地", Color(0xFF9C27B0), Icons.Default.DirectionsCar)  // ⭐ 修改：更清晰的提示
+        6 -> Triple("✅ 行程已完成", Color(0xFF2E7D32), Icons.Default.CheckCircle)  // ⭐ 修改：显示完成状态
+        7 -> Triple("已取消", Color.Gray, Icons.Default.CarCrash)
+        8 -> Triple("已拒绝", Color.Red, Icons.Default.CarCrash)
         else -> Triple("未知状态", Color.Gray, Icons.Default.CarCrash)
     }
 
@@ -738,30 +758,119 @@ private fun DestinationInfo(destAddress: String?) {
 
 @Composable
 private fun ActionButtons(
+    orderStatus: Int,  // ⭐ 修复：传入订单状态
+    etaMinutes: Int?,  // ⭐ 新增：预计到达时间
     canCancel: Boolean,
     onCancelOrder: () -> Unit,
-    onCallDriver: () -> Unit
+    onCallDriver: () -> Unit,
+    onBoardCar: () -> Unit = {}  // ⭐ 乘客上车
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        if (canCancel) {
-            OutlinedButton(
-                onClick = onCancelOrder,
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red)
+    // ⭐ 根据订单状态显示不同按钮
+    when (orderStatus) {
+        4 -> {
+            // ⭐ 司机已到达：显示“乘客上车”按钮
+            Button(
+                onClick = onBoardCar,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50)),
+                shape = RoundedCornerShape(12.dp)
             ) {
-                Text("取消订单", fontSize = 15.sp)
+                Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("乘客上车，开始行程", fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
         }
-        
-        Button(
-            onClick = onCallDriver,
-            modifier = Modifier.weight(1f),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1677FF))
-        ) {
-            Text("联系司机", fontSize = 15.sp)
+        5 -> {
+            // ⭐ 行程中：司机载乘客去目的地，乘客端只需等待
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFE3F2FD))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        Icons.Default.DirectionsCar,
+                        contentDescription = null,
+                        tint = Color(0xFF1677FF),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = "🚗 行程进行中，司机正前往目的地",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF1677FF)
+                        )
+                        if (etaMinutes != null && etaMinutes > 0) {
+                            Text(
+                                text = "预计 ${etaMinutes} 分钟到达",
+                                fontSize = 14.sp,
+                                color = Color(0xFF666666)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        6 -> {
+            // ⭐ 行程已完成：显示总结信息
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = Color(0xFF2E7D32),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "🎉 行程已结束，感谢您的使用！",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF2E7D32)
+                    )
+                }
+            }
+        }
+        else -> {
+            // ⭐ 其他状态：显示取消订单和联系司机按钮
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (canCancel) {
+                    OutlinedButton(
+                        onClick = onCancelOrder,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red)
+                    ) {
+                        Text("取消订单", fontSize = 15.sp)
+                    }
+                }
+                
+                Button(
+                    onClick = onCallDriver,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1677FF))
+                ) {
+                    Text("联系司机", fontSize = 15.sp)
+                }
+            }
         }
     }
 }

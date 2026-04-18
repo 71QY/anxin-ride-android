@@ -3,32 +3,28 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- 汽车主体 - 蓝色 -->
+    <!-- 汽车主体 - 蓝色 (再次缩小) -->
     <path
         android:fillColor="#4A90E2"
-        android:pathData="M54,32c-10,0 -19,5 -23,14c-2,4 -3,10 -3,15v3c0,7 5,12 12,12h28c7,0 12,-5 12,-12v-3c0,-5 -1,-11 -3,-15c-4,-9 -13,-14 -23,-14z"/>
-    <!-- 挡风玻璃 - 白色 -->
+        android:pathData="M54,50c-4,0 -7.5,2.5 -10,6c-0.8,1.5 -1,4 -1,6.5v1c0,3 2,5 5,5h12c3,0 5,-2 5,-5v-1c0,-2.5 -0.2,-5 -1,-6.5c-2.5,-3.5 -6,-6 -10,-6z"/>
+    <!-- 挡风玻璃 - 白色 (再次缩小) -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M54,37c-7,0 -13,4 -15,10c-1,2 -1.5,4 -1.5,7h34c0,-3 -0.5,-5 -1.5,-7c-2,-6 -8,-10 -15,-10z"/>
-    <!-- 车灯左 -->
+        android:pathData="M54,53c-3,0 -5.5,1.5 -7,3.5c-0.3,0.6 -0.5,1.5 -0.5,2.5h15c0,-1 -0.2,-1.9 -0.5,-2.5c-1.5,-2 -4,-3.5 -7,-3.5z"/>
+    <!-- 车灯左 (再次缩小) -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M36,58c-2,0 -4,2 -4,4v4c0,2 2,4 4,4h2v-12h-2z"/>
-    <!-- 车灯右 -->
+        android:pathData="M46,62c-0.6,0 -1.2,0.6 -1.2,1.2v1.6c0,0.6 0.6,1.2 1.2,1.2h0.6v-4h-0.6z"/>
+    <!-- 车灯右 (再次缩小) -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M72,58c2,0 4,2 4,4v4c0,2 -2,4 -4,4h-2v-12h2z"/>
-    <!-- 车轮左 -->
+        android:pathData="M62,62c0.6,0 1.2,0.6 1.2,1.2v1.6c0,0.6 -0.6,1.2 -1.2,1.2h-0.6v-4h0.6z"/>
+    <!-- 车轮左 (再次缩小) -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M36,71h-5c-2,0 -3,1 -3,3v2h11v-2c0,-2 -1,-3 -3,-3z"/>
-    <!-- 车轮右 -->
+        android:pathData="M46,67h-2c-0.6,0 -1.2,0.5 -1.2,1.2v0.6h5.2v-0.6c0,-0.7 -0.5,-1.2 -1.2,-1.2z"/>
+    <!-- 车轮右 (再次缩小) -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M72,71h5c2,0 3,1 3,3v2h-11v-2c0,-2 1,-3 3,-3z"/>
-    <!-- 安心出行文字 - 白色 -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M40,50h28v8h-28z"/>
+        android:pathData="M62,67h2c0.6,0 1.2,0.5 1.2,1.2v0.6h-5.2v-0.6c0,-0.7 0.5,-1.2 1.2,-1.2z"/>
 </vector>

@@ -46,6 +46,7 @@
     import com.example.myapplication.core.utils.BaiduSpeechRecognizerHelper
     import com.example.myapplication.MyApplication
     import com.example.myapplication.core.datastore.TokenManager
+    // ⭐ 修复：移除 AppIconSwitcher 导入，图标切换由 LoginViewModel 负责
     import dagger.hilt.android.lifecycle.HiltViewModel
     import dagger.hilt.android.qualifiers.ApplicationContext
     import kotlinx.coroutines.Job
@@ -232,11 +233,15 @@
                 _userId.value = tokenManager.getUserId()
                 Log.d("HomeViewModel", "🔑 userId: ${_userId.value}")
                 
-                // ⭐ 修复：不再在这里调用 loadProfile，由 UI 层的 checkElderMode 统一处理
-                // 避免重复调用 API 导致竞态条件
+                // ⭐ 修复：自动调用 checkElderMode，确保 isElderMode 状态正确
                 if (_userId.value != null) {
-                    Log.d("HomeViewModel", "✅ 检测到 userId，等待 UI 层调用 checkElderMode")
-                    // ⭐ 注意：WebSocket 连接已移至 checkElderMode() 中，根据模式决定是否连接
+                    Log.d("HomeViewModel", "✅ 检测到 userId，自动检查长辈模式")
+                    checkElderMode(
+                        onAuthFailure = {
+                            Log.w("HomeViewModel", "⚠️ Token已失效，需要重新登录")
+                            _isProfileLoaded.value = false
+                        }
+                    )
                 } else {
                     Log.d("HomeViewModel", "ℹ️ 无 userId，跳过自动登录")
                 }
@@ -475,8 +480,15 @@
                         // 最终结果：更新文本，但不自动搜索
                         Log.d("HomeViewModel", "✅ 百度语音最终结果: $finalText")
                         if (finalText.isNotBlank() && !finalText.contains("配置错误")) {
-                            _voiceText.value = finalText
-                            updateDestination(finalText)  // ⭐ 只更新目的地，不自动搜索
+                            // ⭐ 新增：应用敏感词过滤
+                            val filteredText = com.example.myapplication.core.utils.SensitiveWordFilter.filterText(finalText)
+                            _voiceText.value = filteredText
+                            updateDestination(filteredText)  // ⭐ 只更新目的地，不自动搜索
+                            
+                            // ⭐ 如果检测到敏感词，提示用户
+                            if (filteredText != finalText) {
+                                Log.w("HomeViewModel", "⚠️ 检测到敏感词，已过滤")
+                            }
                         } else if (finalText.contains("配置错误")) {
                             Log.e("HomeViewModel", "⚠️ 语音配置错误")
                             // ⭐ 显示错误提示
@@ -490,8 +502,10 @@
                         // ⭐ 实时部分结果：像微信一样逐字显示
                         Log.d("HomeViewModel", "🔄 百度语音实时结果: $partialText")
                         if (partialText.isNotBlank()) {
-                            _voiceText.value = partialText
-                            updateDestination(partialText)  // ⭐ 实时更新 UI，让用户看到自己说的话
+                            // ⭐ 实时结果也应用敏感词过滤
+                            val filteredText = com.example.myapplication.core.utils.SensitiveWordFilter.filterText(partialText)
+                            _voiceText.value = filteredText
+                            updateDestination(filteredText)  // ⭐ 实时更新 UI，让用户看到自己说的话
                         }
                     },
                     language = baiduLanguage  // ⭐ 传入方言
@@ -558,6 +572,8 @@
     
         fun updateCurrentLocation(lat: Double, lng: Double) {
             _currentLocation.value = LatLng(lat, lng)
+            // ⭐ 同步到全局位置管理器，供其他页面使用
+            com.example.myapplication.core.utils.LocationManager.updateLocation(lat, lng)
         }
     
         // ⭐ 新增：更新定位精度
@@ -735,10 +751,10 @@
                     
                 } catch (e: Exception) {
                     Log.e("HomeViewModel", "获取 POI 详情失败", e)
-                    // ⭐ 修改：即使出错也显示基本信息
+                    // ✅ 修复：即使出错也显示基本信息，但标记为不可下单
                     _poiDetail.value = PoiDetail(
                         name = poi.name,
-                        address = poi.name,  // 使用名称作为临时地址
+                        address = poi.name,  // ✅ 降级：使用名称作为地址
                         lat = poi.coordinate.latitude,
                         lng = poi.coordinate.longitude,
                         canOrder = false,
@@ -1502,7 +1518,9 @@
                             // ⭐ 更新本地存储
                             tokenManager.saveGuardMode(serverGuardMode)
                             
-                            Log.d("HomeViewModel", "✅ 从服务器同步长辈模式：${_isElderMode.value}, guardMode=$serverGuardMode")
+                            // ⭐ 修复：移除图标切换逻辑，避免 Activity 重建导致 ViewModel 销毁
+                            // 图标切换仅在登录成功后由 LoginViewModel 执行
+                            Log.d("HomeViewModel", "📊 从服务器同步长辈模式：${_isElderMode.value}, guardMode=$serverGuardMode")
                             Log.d("HomeViewModel", "📊 用户信息：userId=${profile.data.id}, nickname=${profile.data.nickname}")
                         } else {
                             // ⭐ 关键修复：只有认证失败才触发退出登录，网络错误等使用本地缓存
@@ -2237,8 +2255,9 @@
                             Log.d("HomeViewModel", "🚗 收到代叫车创建消息")
                             
                             // ⭐ 关键修复：只有长辈端才需要显示确认弹窗
+                            Log.d("HomeViewModel", "🔍 当前 isElderMode=${_isElderMode.value}")
                             if (!_isElderMode.value) {
-                                Log.d("HomeViewModel", "⏭️ 当前是普通用户，忽略 ORDER_CREATED 消息（由后端推送给代叫人作为确认）")
+                                Log.w("HomeViewModel", "⏭️ 当前是普通用户，忽略 ORDER_CREATED 消息（由后端推送给代叫人作为确认）")
                                 return@launch
                             }
                             

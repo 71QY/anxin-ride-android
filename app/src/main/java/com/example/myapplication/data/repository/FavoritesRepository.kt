@@ -4,6 +4,8 @@ import android.util.Log
 import com.example.myapplication.core.network.ApiService
 import com.example.myapplication.data.model.FavoriteLocation
 import com.example.myapplication.data.model.SaveFavoriteRequest
+import com.example.myapplication.data.model.ShareFavoriteRequest  // ⭐ 新增：分享收藏请求
+import com.example.myapplication.data.model.ConfirmArrivalRequest  // ⭐ 新增：确认到达请求
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -100,6 +102,48 @@ class FavoritesRepository @Inject constructor(
             }
         } catch (e: Exception) {
             Log.e(TAG, "❌ 删除收藏异常", e)
+            Result.failure(e)
+        }
+    }
+    
+    /**
+     * ⭐ 新增：分享收藏地点给亲友
+     */
+    suspend fun shareFavorite(request: ShareFavoriteRequest): Result<Unit> {
+        return try {
+            Log.d(TAG, "📤 分享收藏地点：favoriteId=${request.favoriteId}, guardianUserId=${request.guardianUserId}")
+            val response = apiService.shareFavorite(request)
+            
+            if (response.isSuccess()) {
+                Log.d(TAG, "✅ 分享成功")
+                Result.success(Unit)
+            } else {
+                Log.e(TAG, "❌ 分享失败：${response.message}")
+                Result.failure(Exception(response.message))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ 分享收藏异常", e)
+            Result.failure(e)
+        }
+    }
+    
+    /**
+     * ⭐ 新增：确认到达目的地
+     */
+    suspend fun confirmArrival(request: ConfirmArrivalRequest): Result<Unit> {
+        return try {
+            Log.d(TAG, "✅ 确认到达：orderId=${request.orderId}, favoriteId=${request.favoriteId}")
+            val response = apiService.confirmArrival(request)
+            
+            if (response.isSuccess()) {
+                Log.d(TAG, "✅ 确认到达成功")
+                Result.success(Unit)
+            } else {
+                Log.e(TAG, "❌ 确认到达失败：${response.message}")
+                Result.failure(Exception(response.message))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ 确认到达异常", e)
             Result.failure(e)
         }
     }

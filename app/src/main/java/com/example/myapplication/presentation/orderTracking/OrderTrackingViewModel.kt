@@ -113,7 +113,9 @@ class OrderTrackingViewModel @Inject constructor(
                 Log.d("OrderTrackingVM", "🚀 开始监听 WebSocket 消息流...")
                 webSocketClient.messages.collect { message ->
                     try {
-                        val wsMessage = Json.decodeFromString<WsMessage>(message)
+                        // ⭐ 修复：配置 Json 忽略未知字段，避免解析错误
+                        val json = Json { ignoreUnknownKeys = true }
+                        val wsMessage = json.decodeFromString<WsMessage>(message)
                         handleWsMessage(wsMessage, orderId)
                     } catch (e: Exception) {
                         Log.e("OrderTrackingVM", "❌ 解析 WebSocket 消息失败", e)
@@ -158,6 +160,26 @@ class OrderTrackingViewModel @Inject constructor(
             WsMessage.TYPE_DRIVER_ARRIVED -> {
                 Log.d("OrderTrackingVM", "🎉 收到 DRIVER_ARRIVED")
                 handleDriverArrived(wsMessage)
+            }
+            
+            WsMessage.TYPE_TRIP_STARTED -> {
+                Log.d("OrderTrackingVM", "🚀 收到 TRIP_STARTED")
+                handleTripStarted(wsMessage)
+            }
+            
+            WsMessage.TYPE_TRIP_COMPLETED -> {
+                Log.d("OrderTrackingVM", "🏁 收到 TRIP_COMPLETED")
+                handleTripCompleted(wsMessage)
+            }
+            
+            WsMessage.TYPE_TRIP_STARTED -> {  // ⭐ 新增：行程开始
+                Log.d("OrderTrackingVM", "🚀 收到 TRIP_STARTED")
+                handleTripStarted(wsMessage)
+            }
+            
+            WsMessage.TYPE_TRIP_COMPLETED -> {  // ⭐ 新增：行程完成
+                Log.d("OrderTrackingVM", "🏁 收到 TRIP_COMPLETED")
+                handleTripCompleted(wsMessage)
             }
             
             WsMessage.TYPE_ORDER_CREATED -> {
@@ -283,17 +305,54 @@ class OrderTrackingViewModel @Inject constructor(
         viewModelScope.launch(Dispatchers.Main) {
             val currentState = _uiState.value
             if (currentState is OrderTrackingUiState.Success) {
+                // ⭐ 修复：司机已到达，更新订单状态为 4（司机已到达）
                 val updatedOrder = currentState.order.copy(
-                    status = 4  // 已到达
+                    status = 4  // ⭐ 修复：更新为司机已到达状态
                 )
-                
                 _uiState.value = OrderTrackingUiState.Success(updatedOrder)
+                
                 _etaMinutes.value = 0
                 
                 // 更新司机位置到起点
                 if (wsMessage.driverLat != null && wsMessage.driverLng != null) {
                     _driverLocation.value = LatLng(wsMessage.driverLat, wsMessage.driverLng)
                 }
+                
+                Log.d("OrderTrackingVM", "✅ 司机已到达上车点，订单状态更新为 4，等待乘客上车")
+            }
+        }
+    }
+
+    /**
+     * ⭐ 新增：处理行程开始
+     */
+    private fun handleTripStarted(wsMessage: WsMessage) {
+        viewModelScope.launch(Dispatchers.Main) {
+            val currentState = _uiState.value
+            if (currentState is OrderTrackingUiState.Success) {
+                val updatedOrder = currentState.order.copy(
+                    status = 5  // 行程中
+                )
+                
+                _uiState.value = OrderTrackingUiState.Success(updatedOrder)
+                Log.d("OrderTrackingVM", "✅ 行程已开始")
+            }
+        }
+    }
+
+    /**
+     * ⭐ 新增：处理行程完成
+     */
+    private fun handleTripCompleted(wsMessage: WsMessage) {
+        viewModelScope.launch(Dispatchers.Main) {
+            val currentState = _uiState.value
+            if (currentState is OrderTrackingUiState.Success) {
+                val updatedOrder = currentState.order.copy(
+                    status = 6  // 已完成
+                )
+                
+                _uiState.value = OrderTrackingUiState.Success(updatedOrder)
+                Log.d("OrderTrackingVM", "✅ 行程已完成")
             }
         }
     }
@@ -383,6 +442,60 @@ class OrderTrackingViewModel @Inject constructor(
             }
         } catch (e: Exception) {
             Log.e("OrderTrackingVM", "❌ 确认异常", e)
+            false
+        }
+    }
+
+    /**
+     * ⭐ 新增：乘客上车/开始行程
+     */
+    suspend fun startTrip(orderId: Long): Boolean {
+        return try {
+            val apiService = com.example.myapplication.core.network.RetrofitClient.instance
+            val result = apiService.passengerBoard(orderId)
+            if (result.isSuccess()) {
+                Log.d("OrderTrackingVM", "✅ 乘客已上车，行程开始")
+                // 更新本地状态
+                val currentState = _uiState.value
+                if (currentState is OrderTrackingUiState.Success) {
+                    _uiState.value = OrderTrackingUiState.Success(
+                        currentState.order.copy(status = 5)  // 行程中
+                    )
+                }
+                true
+            } else {
+                Log.e("OrderTrackingVM", "❌ 开始行程失败: ${result.message}")
+                false
+            }
+        } catch (e: Exception) {
+            Log.e("OrderTrackingVM", "❌ 开始行程异常", e)
+            false
+        }
+    }
+
+    /**
+     * ⭐ 新增：到达目的地/完成行程
+     */
+    suspend fun finishTrip(orderId: Long): Boolean {
+        return try {
+            val apiService = com.example.myapplication.core.network.RetrofitClient.instance
+            val result = apiService.completeTrip(orderId)
+            if (result.isSuccess()) {
+                Log.d("OrderTrackingVM", "✅ 行程已完成")
+                // 更新本地状态
+                val currentState = _uiState.value
+                if (currentState is OrderTrackingUiState.Success) {
+                    _uiState.value = OrderTrackingUiState.Success(
+                        currentState.order.copy(status = 6)  // 已完成
+                    )
+                }
+                true
+            } else {
+                Log.e("OrderTrackingVM", "❌ 完成行程失败: ${result.message}")
+                false
+            }
+        } catch (e: Exception) {
+            Log.e("OrderTrackingVM", "❌ 完成行程异常", e)
             false
         }
     }

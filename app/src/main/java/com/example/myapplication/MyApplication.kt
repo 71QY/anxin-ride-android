@@ -68,8 +68,9 @@ class MyApplication : Application() {
             // ⭐ 新增：应用启动时检查并清理无效数据
             checkAndClearInvalidData()
             
-            // ⭐ 新增：应用启动时恢复应用图标（根据本地缓存的 guardMode）
-            restoreAppIcon()
+            // ⭐ 修复：移除启动时的图标恢复逻辑
+            // 原因：activity-alias 切换会导致 Activity 重建，影响用户体验
+            // 图标切换仅在登录成功后执行，由 LoginViewModel 负责
             
             Log.d(TAG, "=== MyApplication onCreate completed ===")
         } catch (e: Exception) {

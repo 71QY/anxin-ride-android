@@ -151,21 +151,8 @@ fun ElderSimplifiedScreen(
         Log.d("ElderSimplifiedScreen", "📍 当前权限状态: ${locationPermissionState.status}")
         Log.d("ElderSimplifiedScreen", "📍 当前位置: lat=${currentLocation?.latitude}, lng=${currentLocation?.longitude}")
         
-        // ⭐ 关键修复：确保 WebSocket 连接（代叫车推送需要）
-        Log.d("ElderSimplifiedScreen", "🔌 ========== 开始调用 checkElderMode ==========")
-        Log.d("ElderSimplifiedScreen", "🚀 即将调用 viewModel.checkElderMode()")
-        try {
-            viewModel.checkElderMode(
-                onAuthFailure = {
-                    Log.w("ElderSimplifiedScreen", "⚠️ Token已失效，触发退出登录")
-                    onLogout()
-                }
-            )
-            Log.d("ElderSimplifiedScreen", "✅ viewModel.checkElderMode() 调用完成（无异常）")
-        } catch (e: Exception) {
-            Log.e("ElderSimplifiedScreen", "❌ checkElderMode 调用异常: ${e.message}", e)
-        }
-        Log.d("ElderSimplifiedScreen", "🔌 ========== checkElderMode 调用结束 ==========")
+        // ⭐ 修复：移除重复的 checkElderMode 调用（HomeScreen 已经调用过）
+        // viewModel.checkElderMode() 已移除，避免触发防抖机制
         
         if (locationPermissionState.status != PermissionStatus.Granted) {
             Log.w("ElderSimplifiedScreen", "⚠️ 权限未授予，请求权限...")
@@ -411,38 +398,55 @@ fun ElderSimplifiedScreen(
                         // ⭐ 关闭倾斜手势，防止3D视角
                         map.uiSettings.isTiltGesturesEnabled = false
                         
-                        // ⭐ 优化：只在位置真正变化时才更新和记录日志
-                        var lastLocation: com.amap.api.maps.model.LatLng? = null
+                        // ✅ 修复：使用 LOCATION_TYPE_LOCATION_ROTATE 模式，显示蓝点和精度圈
+                        val myLocationStyle = com.amap.api.maps.model.MyLocationStyle()
+                        myLocationStyle.myLocationType(com.amap.api.maps.model.MyLocationStyle.LOCATION_TYPE_LOCATION_ROTATE)
+                        myLocationStyle.radiusFillColor(android.graphics.Color.argb(100, 66, 133, 244))  // ✅ 加深蓝色填充（透明度100/255）
+                        myLocationStyle.strokeColor(android.graphics.Color.argb(220, 66, 133, 244))  // ✅ 加深蓝色边框（透明度220/255）
+                        myLocationStyle.strokeWidth(4f)  // ✅ 加粗边框到4px
+                        myLocationStyle.interval(3000)  // ✅ 3秒更新一次，防止精度圈消失
+                        map.myLocationStyle = myLocationStyle
+                        
+                        // ✅ 修复：降低防抖阈值，让精度圈更稳定
+                        var lastLocationUpdate = 0L
+                        var lastLat = 0.0
+                        var lastLng = 0.0
+                        val MIN_LOCATION_CHANGE_METERS = 3.0  // ✅ 降低到3米（减少消失）
+                        
                         map.setOnMyLocationChangeListener { location ->
+                            val currentTime = System.currentTimeMillis()
                             val currentLat = location.latitude
                             val currentLng = location.longitude
                             
-                            // ⭐ 关键优化：只有位置变化超过 10 米才更新（避免频繁日志）
-                            val hasSignificantChange = lastLocation == null || 
-                                kotlin.math.abs(currentLat - lastLocation!!.latitude) > 0.0001 || 
-                                kotlin.math.abs(currentLng - lastLocation!!.longitude) > 0.0001
+                            // ✅ 计算距离变化
+                            val hasSignificantChange = if (lastLat == 0.0 && lastLng == 0.0) {
+                                true  // 首次定位
+                            } else {
+                                val distance = android.location.Location("temp").apply {
+                                    latitude = lastLat
+                                    longitude = lastLng
+                                }.distanceTo(android.location.Location("temp").apply {
+                                    latitude = currentLat
+                                    longitude = currentLng
+                                })
+                                distance >= MIN_LOCATION_CHANGE_METERS
+                            }
                             
-                            if (hasSignificantChange) {
-                                Log.d("ElderSimplifiedScreen", "📍 位置变化：lat=$currentLat, lng=$currentLng")
+                            // ✅ 只有位置变化超过3米且间隔超过1秒才更新（更频繁，防止消失）
+                            if (hasSignificantChange && (currentTime - lastLocationUpdate > 1000)) {
                                 viewModel.updateCurrentLocation(currentLat, currentLng)
                                 if (location.accuracy > 0) {
                                     viewModel.updateLocationAccuracy(location.accuracy)
                                 }
-                                lastLocation = com.amap.api.maps.model.LatLng(currentLat, currentLng)
+                                lastLocationUpdate = currentTime
+                                lastLat = currentLat
+                                lastLng = currentLng
+                                Log.d("ElderSimplifiedScreen", "📍 位置更新：lat=$currentLat, lng=$currentLng, accuracy=${location.accuracy}m")
                             }
                         }
                         
                         // ⭐ 隐藏InfoWindow，减少渲染开销
                         map.setInfoWindowAdapter(null)
-                        
-                        // 配置定位样式 - ⭐ 优化：10秒更新一次，减少频繁定位导致的卡顿
-                        val myLocationStyle = com.amap.api.maps.model.MyLocationStyle()
-                        myLocationStyle.myLocationType(com.amap.api.maps.model.MyLocationStyle.LOCATION_TYPE_LOCATION_ROTATE)
-                        myLocationStyle.radiusFillColor(android.graphics.Color.argb(100, 0, 0, 255))
-                        myLocationStyle.strokeColor(android.graphics.Color.argb(100, 0, 0, 255))
-                        myLocationStyle.strokeWidth(2f)
-                        myLocationStyle.interval(10000)  // ⭐ 修复：10秒更新一次，与NormalHomeScreen保持一致
-                        map.myLocationStyle = myLocationStyle
                         
                         // 监听地图拖动
                         map.setOnCameraChangeListener(object : AMap.OnCameraChangeListener {

@@ -25,11 +25,14 @@ class TokenManager(context: Context) {
     }
 
     suspend fun clearToken() {
-        prefs.edit().remove("token").remove("user_id").remove("guard_mode").apply()
+        // ⭐ 修复：只清除 token，保留 user_id 和 guard_mode
+        // 避免 Token 刷新失败时丢失用户信息，导致功能异常
+        prefs.edit().remove("token").apply()
     }
     
     // ⭐ 新增：同步清除 Token（用于回调中）
     fun clearTokenSync() {
-        prefs.edit().remove("token").remove("user_id").remove("guard_mode").apply()
+        // ⭐ 修复：只清除 token，保留 user_id 和 guard_mode
+        prefs.edit().remove("token").apply()
     }
 }

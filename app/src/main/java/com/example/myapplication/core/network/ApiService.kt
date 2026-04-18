@@ -40,6 +40,8 @@ import com.example.myapplication.data.model.PrivateChatMessage  // ⭐ 新增：
 import com.example.myapplication.data.model.SendPrivateMessageRequest  // ⭐ 新增：发送私聊请求
 import com.example.myapplication.data.model.FavoriteLocation  // ⭐ 新增：收藏地点
 import com.example.myapplication.data.model.SaveFavoriteRequest  // ⭐ 新增：保存收藏请求
+import com.example.myapplication.data.model.ShareFavoriteRequest  // ⭐ 新增：分享收藏请求
+import com.example.myapplication.data.model.ConfirmArrivalRequest  // ⭐ 新增：确认到达请求
 import okhttp3.MultipartBody
 import retrofit2.http.*
 
@@ -194,6 +196,14 @@ interface ApiService {
     suspend fun confirmDriverAcceptance(
         @Body request: ConfirmDriverRequest
     ): Result<Unit>
+
+    // ⭐ 新增：乘客上车/开始行程
+    @POST("order/{id}/board")
+    suspend fun passengerBoard(@Path("id") orderId: Long): Result<Unit>
+
+    // ⭐ 新增：到达目的地/完成行程
+    @POST("order/{id}/complete")
+    suspend fun completeTrip(@Path("id") orderId: Long): Result<Unit>
 
     @GET("order/list")
     suspend fun getOrderList(
@@ -478,6 +488,24 @@ interface ApiService {
     @DELETE("favorites/{id}")
     suspend fun deleteFavorite(
         @Path("id") favoriteId: Long
+    ): Result<Unit>
+    
+    /**
+     * ⭐ 新增：分享收藏地点给亲友
+     * POST /api/favorites/share
+     */
+    @POST("favorites/share")
+    suspend fun shareFavorite(
+        @Body request: ShareFavoriteRequest
+    ): Result<Unit>
+    
+    /**
+     * ⭐ 新增：确认到达目的地
+     * POST /api/favorites/confirm-arrival
+     */
+    @POST("favorites/confirm-arrival")
+    suspend fun confirmArrival(
+        @Body request: ConfirmArrivalRequest
     ): Result<Unit>
 }
 

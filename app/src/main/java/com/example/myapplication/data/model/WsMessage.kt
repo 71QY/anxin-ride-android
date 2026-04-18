@@ -51,6 +51,8 @@ data class WsMessage(
         const val TYPE_DRIVER_REJECTED = "DRIVER_REJECTED"  // ⭐ 新增：用户拒绝接单
         const val TYPE_DRIVER_LOCATION = "DRIVER_LOCATION"
         const val TYPE_DRIVER_ARRIVED = "DRIVER_ARRIVED"
+        const val TYPE_TRIP_STARTED = "TRIP_STARTED"  // ⭐ 新增：行程开始
+        const val TYPE_TRIP_COMPLETED = "TRIP_COMPLETED"  // ⭐ 新增：行程完成
         const val TYPE_ORDER_CREATED = "ORDER_CREATED"
         const val TYPE_PROXY_ORDER_CONFIRMED = "PROXY_ORDER_CONFIRMED"
     }

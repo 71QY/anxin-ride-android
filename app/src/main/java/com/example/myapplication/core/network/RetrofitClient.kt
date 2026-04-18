@@ -17,7 +17,8 @@ object RetrofitClient {
 
     private val client = OkHttpClient.Builder()
         .addInterceptor(HttpLoggingInterceptor().apply { 
-            level = HttpLoggingInterceptor.Level.BODY 
+            // ⭐ 修复：使用 BASIC 级别，避免读取已关闭的响应体导致崩溃
+            level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BASIC else HttpLoggingInterceptor.Level.NONE
         })
         .addInterceptor(AuthInterceptor())
         .connectTimeout(30, TimeUnit.SECONDS)

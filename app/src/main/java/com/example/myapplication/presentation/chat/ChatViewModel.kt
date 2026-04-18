@@ -1457,7 +1457,14 @@ class ChatViewModel @Inject constructor(
                     // 最终结果：更新输入框，但不自动发送
                     Log.d("ChatViewModel", "✅ 收到百度语音最终结果: $finalText")
                     if (finalText.isNotBlank() && !finalText.contains("配置错误")) {
-                        _voiceInputText.value = finalText  // ⭐ 设置到输入框，等待用户手动发送
+                        // ⭐ 新增：应用敏感词过滤
+                        val filteredText = com.example.myapplication.core.utils.SensitiveWordFilter.filterText(finalText)
+                        _voiceInputText.value = filteredText  // ⭐ 设置到输入框，等待用户手动发送
+                        
+                        // ⭐ 如果检测到敏感词，提示用户
+                        if (filteredText != finalText) {
+                            Log.w("ChatViewModel", "⚠️ 检测到敏感词，已过滤")
+                        }
                     } else {
                         Log.w("ChatViewModel", "⚠️ 语音识别结果为空或配置错误")
                         // ⭐ 不显示提示，避免干扰用户
@@ -1470,7 +1477,9 @@ class ChatViewModel @Inject constructor(
                     // ⭐ 实时部分结果：像微信一样逐字显示
                     Log.d("ChatViewModel", "🔄 收到百度语音实时结果: $partialText")
                     if (partialText.isNotBlank()) {
-                        _voiceInputText.value = partialText  // ⭐ 实时更新 UI
+                        // ⭐ 实时结果也应用敏感词过滤
+                        val filteredText = com.example.myapplication.core.utils.SensitiveWordFilter.filterText(partialText)
+                        _voiceInputText.value = filteredText  // ⭐ 实时更新 UI
                     }
                 },
                 language = baiduLanguage  // ⭐ 传入方言参数

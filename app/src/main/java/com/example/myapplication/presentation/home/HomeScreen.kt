@@ -50,7 +50,6 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.amap.api.maps.AMap
 import com.amap.api.maps.CameraUpdateFactory
@@ -65,8 +64,8 @@ import kotlinx.coroutines.delay
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun HomeScreen(
-    viewModel: HomeViewModel = hiltViewModel(),
-    chatViewModel: ChatViewModel? = null,  // ⭐ 新增：ChatViewModel 参数（可选）
+    viewModel: HomeViewModel,  // ⭐ 修复：移除默认参数，必须由调用方传入
+    chatViewModel: ChatViewModel,  // ⭐ 修复：改为非空，必须由调用方传入
     onNavigateToProfile: () -> Unit,
     onRequestLocationPermission: () -> Unit,
     onNavigateToOrder: (String) -> Unit,
@@ -80,25 +79,14 @@ fun HomeScreen(
     // ⭐ 新增：监听用户信息加载状态
     val isProfileLoaded by viewModel.isProfileLoaded.collectAsStateWithLifecycle()
     
-    // ⭐ 首次加载时检查长辈模式（不需要再次调用 loadProfile，init 块已经调用）
-    var hasCheckedElderMode by remember { mutableStateOf(false) }  // ⭐ 修复：改用 remember，应用重启后会重置
-    LaunchedEffect(Unit) {
-        if (hasCheckedElderMode) {
-            Log.d("HomeScreen", "⚠️ checkElderMode 已经执行过，跳过")
-            return@LaunchedEffect
-        }
-        
-        Log.d("HomeScreen", "🚀 HomeScreen 初始化，开始检查长辈模式...")
-        
-        hasCheckedElderMode = true
-        viewModel.checkElderMode(
-            onAuthFailure = {
-                Log.w("HomeScreen", "⚠️ Token已失效，触发退出登录")
-                // 清除本地数据并跳转到登录页
-                onLogout()
-            }
-        )
-    }
+    // ⭐ 修复：移除 checkElderMode 调用，由 HomeViewModel init 块自动执行
+    // 原因：避免重复调用导致协程冲突和 ViewModel 销毁
+    
+    // ⭐ 关键调试：每次重组都打印模式状态
+    Log.d("HomeScreen", "🔍 === HomeScreen 重组 ===")
+    Log.d("HomeScreen", "🔍 isElderMode=$isElderMode")
+    Log.d("HomeScreen", "🔍 isProfileLoaded=$isProfileLoaded")
+    Log.d("HomeScreen", "🔍 userId=${viewModel.userId.value}")
     
     // ⭐ 修复：监听 isProfileLoaded 状态，添加延迟避免误判
     var hasCheckedProfile by remember { mutableStateOf(false) }
@@ -118,13 +106,12 @@ fun HomeScreen(
     
     // ⭐ 根据模式显示不同界面
     Log.d("HomeScreen", "🔍 当前模式判断: isElderMode=$isElderMode")
+    
     if (isElderMode) {
         Log.d("HomeScreen", "✅ 显示长辈模式界面")
-        // ⭐ 关键修复：传入 chatViewModel，确保使用同一个实例
-        val elderChatViewModel = chatViewModel ?: hiltViewModel()
         ElderSimplifiedScreen(
             viewModel = viewModel,
-            chatViewModel = elderChatViewModel,  // ⭐ 传递 ChatViewModel
+            chatViewModel = chatViewModel,  // ⭐ 直接使用传入的 chatViewModel
             onNavigateToProfile = onNavigateToProfile,
             onNavigateToChat = onNavigateToChat,
             onLogout = onLogout,  // ⭐ 传递退出登录回调

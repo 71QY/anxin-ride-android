@@ -9,6 +9,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateIntAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -37,6 +38,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.ViewCompat
@@ -79,7 +81,7 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalAnimationApi::class)
 @Composable
 fun NormalHomeScreen(
-    viewModel: HomeViewModel = hiltViewModel(),
+    viewModel: HomeViewModel,  // ⭐ 修复：移除默认参数，必须由调用方传入
     onNavigateToProfile: () -> Unit,
     onRequestLocationPermission: () -> Unit,
     onNavigateToOrder: (String) -> Unit,
@@ -292,19 +294,51 @@ fun NormalHomeScreen(
                 aMapState.value = aMap
                 aMap.isMyLocationEnabled = true
                 
+                // ✅ 修复：使用 LOCATION_TYPE_LOCATION_ROTATE 模式，显示蓝点和精度圈
                 val myLocationStyle = com.amap.api.maps.model.MyLocationStyle()
                 myLocationStyle.myLocationType(com.amap.api.maps.model.MyLocationStyle.LOCATION_TYPE_LOCATION_ROTATE)
-                myLocationStyle.radiusFillColor(android.graphics.Color.argb(100, 66, 133, 244))  // ⭐ 修复：蓝色半透明填充
-                myLocationStyle.strokeColor(android.graphics.Color.argb(200, 66, 133, 244))  // ⭐ 修复：蓝色边框，更高透明度
-                myLocationStyle.strokeWidth(3f)  // ⭐ 修复：增加边框宽度
-                myLocationStyle.interval(10000)  // ⭐ 修复：10秒更新一次，减少卡顿
-                myLocationStyle.showMyLocation(true)  // ⭐ 关键修复：确保持续显示定位圈
+                myLocationStyle.radiusFillColor(android.graphics.Color.argb(100, 66, 133, 244))  // ✅ 加深蓝色填充（透明度100/255）
+                myLocationStyle.strokeColor(android.graphics.Color.argb(220, 66, 133, 244))  // ✅ 加深蓝色边框（透明度220/255）
+                myLocationStyle.strokeWidth(4f)  // ✅ 加粗边框到4px
+                myLocationStyle.interval(3000)  // ✅ 3秒更新一次，防止精度圈消失
+                myLocationStyle.showMyLocation(true)
                 aMap.myLocationStyle = myLocationStyle
                 
+                // ✅ 修复：降低防抖阈值，让精度圈更稳定
+                var lastLocationUpdate = 0L
+                var lastLat = 0.0
+                var lastLng = 0.0
+                val MIN_LOCATION_CHANGE_METERS = 3.0  // ✅ 降低到3米（减少消失）
+                
                 aMap.setOnMyLocationChangeListener { location ->
-                    viewModel.updateCurrentLocation(location.latitude, location.longitude)
-                    if (location.accuracy > 0) {
-                        viewModel.updateLocationAccuracy(location.accuracy)
+                    val currentTime = System.currentTimeMillis()
+                    val currentLat = location.latitude
+                    val currentLng = location.longitude
+                    
+                    // ✅ 计算距离变化
+                    val hasSignificantChange = if (lastLat == 0.0 && lastLng == 0.0) {
+                        true  // 首次定位
+                    } else {
+                        val distance = android.location.Location("temp").apply {
+                            latitude = lastLat
+                            longitude = lastLng
+                        }.distanceTo(android.location.Location("temp").apply {
+                            latitude = currentLat
+                            longitude = currentLng
+                        })
+                        distance >= MIN_LOCATION_CHANGE_METERS
+                    }
+                    
+                    // ✅ 只有位置变化超过3米且间隔超过1秒才更新（更频繁，防止消失）
+                    if (hasSignificantChange && (currentTime - lastLocationUpdate > 1000)) {
+                        viewModel.updateCurrentLocation(currentLat, currentLng)
+                        if (location.accuracy > 0) {
+                            viewModel.updateLocationAccuracy(location.accuracy)
+                        }
+                        lastLocationUpdate = currentTime
+                        lastLat = currentLat
+                        lastLng = currentLng
+                        Log.d("NormalHomeScreen", "📍 位置更新：lat=$currentLat, lng=$currentLng, accuracy=${location.accuracy}m")
                     }
                 }
                 
@@ -527,7 +561,6 @@ fun NormalHomeScreen(
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .height(animatedBottomPanelHeight.dp)
-                .offset(y = 38.dp)  // ⭐ 修复：下移1cm，使用offset而非padding
                 .pointerInput(Unit) {
                     detectVerticalDragGestures(
                         onVerticalDrag = { _, dragAmount ->
@@ -578,6 +611,72 @@ fun NormalHomeScreen(
                         color = Color(0xFF1A1A1A),
                         modifier = Modifier.padding(bottom = 4.dp)  // ⭐ 优化：减小间距，使卡片更紧凑
                     )
+                    
+                    // ⭐ 新增：语音输入实时显示（仿搜狗输入法）
+                    AnimatedVisibility(
+                        visible = isListening,
+                        enter = fadeIn(animationSpec = tween(200)) + expandVertically(animationSpec = tween(200)),
+                        exit = fadeOut(animationSpec = tween(200)) + shrinkVertically(animationSpec = tween(200))
+                    ) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F4FF)),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // ⭐ 录音动画图标
+                                Box(
+                                    modifier = Modifier.size(24.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(24.dp),
+                                        color = Color(0xFF165DFF),
+                                        strokeWidth = 2.dp
+                                    )
+                                    Icon(
+                                        Icons.Default.Mic,
+                                        contentDescription = null,
+                                        tint = Color(0xFF165DFF),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                
+                                // ⭐ 实时文字显示
+                                Text(
+                                    text = if (voiceText.isNotBlank()) voiceText else "正在听您说话...",
+                                    fontSize = 14.sp,
+                                    color = Color(0xFF1A1A1A),
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                
+                                // ⭐ 清空按钮
+                                if (voiceText.isNotBlank()) {
+                                    IconButton(
+                                        onClick = { viewModel.updateDestination("") },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = "清空",
+                                            tint = Color.Gray,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                     
                     // 目的地输入框 - ⭐ 优化：添加防抖和更好的交互反馈
                     var isSearchFieldFocused by remember { mutableStateOf(false) }
@@ -684,7 +783,12 @@ fun NormalHomeScreen(
                                         audioPermissionState.launchPermissionRequest()
                                     }
                                 }, modifier = Modifier.size(40.dp)) {
-                                    Icon(if (isListening) Icons.Default.MicOff else Icons.Default.Mic, contentDescription = if (isListening) "停止录音" else "语音输入", tint = if (isListening) Color.Red else Color(0xFF165DFF), modifier = Modifier.size(24.dp))
+                                    Icon(
+                                        if (isListening) Icons.Default.MicOff else Icons.Default.Mic, 
+                                        contentDescription = if (isListening) "停止录音（再次点击）" else "语音输入", 
+                                        tint = if (isListening) Color.Red else Color(0xFF165DFF), 
+                                        modifier = Modifier.size(24.dp)
+                                    )
                                 }
                                 
                                 IconButton(onClick = { showDialectDialog = true }, modifier = Modifier.size(40.dp)) {

@@ -15,7 +15,10 @@ data class FavoriteLocation(
     @SerialName("latitude") val latitude: Double,   // 纬度
     @SerialName("longitude") val longitude: Double, // 经度
     @SerialName("type") val type: String = "CUSTOM", // 类型：HOME, COMPANY, HOSPITAL, CUSTOM
-    @SerialName("updatedAt") val updatedAt: String? = null // 更新时间
+    @SerialName("phone") val phone: String? = null,  // ⭐ 联系电话
+    @SerialName("description") val description: String? = null,  // ⭐ 简介说明
+    @SerialName("updatedAt") val updatedAt: String? = null, // 更新时间
+    @SerialName("lastVisitedAt") val lastVisitedAt: String? = null  // ⭐ 最后访问时间（行程凭证）
 )
 
 /**
@@ -28,5 +31,25 @@ data class SaveFavoriteRequest(
     @SerialName("address") val address: String,
     @SerialName("latitude") val latitude: Double,
     @SerialName("longitude") val longitude: Double,
-    @SerialName("type") val type: String = "CUSTOM"
+    @SerialName("type") val type: String = "CUSTOM",
+    @SerialName("phone") val phone: String? = null,  // ⭐ 联系电话
+    @SerialName("description") val description: String? = null  // ⭐ 简介说明
+)
+
+/**
+ * ⭐ 新增：分享收藏地点给亲友的请求
+ */
+@Serializable
+data class ShareFavoriteRequest(
+    @SerialName("favoriteId") val favoriteId: Long,  // 收藏地点ID
+    @SerialName("guardianUserId") val guardianUserId: Long  // 亲友用户ID
+)
+
+/**
+ * ⭐ 新增：确认到达目的地的请求
+ */
+@Serializable
+data class ConfirmArrivalRequest(
+    @SerialName("orderId") val orderId: Long,  // 订单ID
+    @SerialName("favoriteId") val favoriteId: Long? = null  // 关联的收藏地点ID（可选）
 )
