@@ -10,7 +10,10 @@ interface IOrderRepository {
         poiLat: Double,  // ⭐ 参数名改为 destLat 的语义
         poiLng: Double,  // ⭐ 参数名改为 destLng 的语义
         passengerCount: Int = 1,
-        remark: String? = null
+        remark: String? = null,
+        elderId: Long? = null,  // ⭐ 新增：长辈ID（用于代叫车）
+        startLat: Double? = null,  // ⭐ 新增：起点纬度（用于代叫车）
+        startLng: Double? = null   // ⭐ 新增：起点经度（用于代叫车）
     ): Result<Order>
 
     suspend fun getOrder(orderId: Long): Result<Order>

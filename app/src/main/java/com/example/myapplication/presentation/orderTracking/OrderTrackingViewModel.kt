@@ -131,8 +131,12 @@ class OrderTrackingViewModel @Inject constructor(
      * 处理 WebSocket 消息
      */
     private fun handleWsMessage(wsMessage: WsMessage, currentOrderId: Long) {
+        // ⭐ 详细日志：打印所有收到的消息
+        Log.d("OrderTrackingVM", "📨 收到 WebSocket 消息：type=${wsMessage.type}, orderId=${wsMessage.orderId}, currentOrderId=$currentOrderId")
+        
         // 只处理当前订单的消息
         if (wsMessage.orderId != null && wsMessage.orderId != currentOrderId) {
+            Log.w("OrderTrackingVM", "⚠️ 忽略非当前订单的消息：messageOrderId=${wsMessage.orderId}")
             return
         }
 
@@ -172,16 +176,6 @@ class OrderTrackingViewModel @Inject constructor(
                 handleTripCompleted(wsMessage)
             }
             
-            WsMessage.TYPE_TRIP_STARTED -> {  // ⭐ 新增：行程开始
-                Log.d("OrderTrackingVM", "🚀 收到 TRIP_STARTED")
-                handleTripStarted(wsMessage)
-            }
-            
-            WsMessage.TYPE_TRIP_COMPLETED -> {  // ⭐ 新增：行程完成
-                Log.d("OrderTrackingVM", "🏁 收到 TRIP_COMPLETED")
-                handleTripCompleted(wsMessage)
-            }
-            
             WsMessage.TYPE_ORDER_CREATED -> {
                 Log.d("OrderTrackingVM", "📦 收到 ORDER_CREATED（代叫车）- 忽略，由 HomeViewModel 处理")
                 // ⭐ 修复：不在此处处理，避免与 HomeViewModel 冲突
@@ -205,7 +199,16 @@ class OrderTrackingViewModel @Inject constructor(
     private fun handleDriverRequest(wsMessage: WsMessage) {
         viewModelScope.launch(Dispatchers.Main) {
             Log.d("OrderTrackingVM", "🚕 收到 DRIVER_REQUEST，显示确认弹窗")
-            // 触发事件，让UI显示确认弹窗
+            Log.d("OrderTrackingVM", "🚕 司机信息：driverName=${wsMessage.driverName}, driverPhone=${wsMessage.driverPhone}")
+            
+            // ⭐ 关键修复：不再立即更新订单状态，等待用户确认后再更新
+            // 只更新司机位置（用于地图显示）
+            if (wsMessage.driverLat != null && wsMessage.driverLng != null) {
+                _driverLocation.value = LatLng(wsMessage.driverLat, wsMessage.driverLng)
+                Log.d("OrderTrackingVM", "📍 已更新司机位置（用于地图预览）")
+            }
+            
+            // 触发事件，让UI显示确认弹窗（仅亲友端）
             _events.emit(OrderTrackingEvent.DriverRequestReceived(wsMessage))
         }
     }
@@ -256,30 +259,67 @@ class OrderTrackingViewModel @Inject constructor(
      */
     private fun handleOrderAccepted(wsMessage: WsMessage) {
         viewModelScope.launch(Dispatchers.Main) {
+            Log.d("OrderTrackingVM", "🚕 处理 ORDER_ACCEPTED 消息")
+            Log.d("OrderTrackingVM", "🚕 司机信息：driverName=${wsMessage.driverName}, driverPhone=${wsMessage.driverPhone}")
+            Log.d("OrderTrackingVM", "🚕 车辆信息：carNo=${wsMessage.carNo}, carType=${wsMessage.carType}")
+            Log.d("OrderTrackingVM", "🚕 位置信息：driverLat=${wsMessage.driverLat}, driverLng=${wsMessage.driverLng}")
+            
+            // ⭐ 关键修复：检查是否是代叫车订单
             val currentState = _uiState.value
             if (currentState is OrderTrackingUiState.Success) {
-                // 更新订单中的司机信息
-                val updatedOrder = currentState.order.copy(
-                    driverName = wsMessage.driverName,
-                    driverPhone = wsMessage.driverPhone,
-                    driverAvatar = wsMessage.driverAvatar,
-                    carNo = wsMessage.carNo,
-                    carType = wsMessage.carType,
-                    carColor = wsMessage.carColor,
-                    rating = wsMessage.rating,
-                    status = 3  // 司机已接单
-                )
+                val order = currentState.order
+                val isProxyOrder = order.guardianUserId != null && order.guardianUserId != order.userId
                 
-                _uiState.value = OrderTrackingUiState.Success(updatedOrder)
+                Log.d("OrderTrackingVM", "📊 当前订单状态：${order.status}")
+                Log.d("OrderTrackingVM", "📊 是否为代叫车订单：$isProxyOrder (guardianUserId=${order.guardianUserId}, userId=${order.userId})")
                 
-                // 更新司机位置
-                if (wsMessage.driverLat != null && wsMessage.driverLng != null) {
-                    _driverLocation.value = LatLng(wsMessage.driverLat, wsMessage.driverLng)
+                if (isProxyOrder) {
+                    // 代叫车订单：直接更新状态（长辈已经确认过了）
+                    Log.d("OrderTrackingVM", "✅ 代叫车订单，直接更新状态")
+                    updateOrderWithDriverInfo(wsMessage)
+                } else {
+                    // ⭐ 普通用户为自己叫车：触发 DRIVER_REQUEST 事件，让用户选择
+                    Log.d("OrderTrackingVM", "👤 普通用户订单，触发 DRIVER_REQUEST 事件")
+                    _events.emit(OrderTrackingEvent.DriverRequestReceived(wsMessage))
                 }
-                
-                // 设置初始 ETA
-                _etaMinutes.value = wsMessage.etaMinutes
+            } else {
+                Log.w("OrderTrackingVM", "⚠️ 当前 UI 状态不是 Success，无法更新订单")
             }
+        }
+    }
+    
+    /**
+     * ⭐ 新增：更新订单中的司机信息
+     */
+    private fun updateOrderWithDriverInfo(wsMessage: WsMessage) {
+        val currentState = _uiState.value
+        if (currentState is OrderTrackingUiState.Success) {
+            // 更新订单中的司机信息
+            val updatedOrder = currentState.order.copy(
+                driverName = wsMessage.driverName,
+                driverPhone = wsMessage.driverPhone,
+                driverAvatar = wsMessage.driverAvatar,
+                carNo = wsMessage.carNo,
+                carType = wsMessage.carType,
+                carColor = wsMessage.carColor,
+                rating = wsMessage.rating,
+                status = 3,  // 司机已接单
+                driverLat = wsMessage.driverLat,
+                driverLng = wsMessage.driverLng
+            )
+            
+            _uiState.value = OrderTrackingUiState.Success(updatedOrder)
+            Log.d("OrderTrackingVM", "✅ 订单状态已更新为 3（司机已接单）")
+            
+            // 更新司机位置
+            if (wsMessage.driverLat != null && wsMessage.driverLng != null) {
+                _driverLocation.value = LatLng(wsMessage.driverLat, wsMessage.driverLng)
+                Log.d("OrderTrackingVM", "📍 司机位置已更新：lat=${wsMessage.driverLat}, lng=${wsMessage.driverLng}")
+            }
+            
+            // 设置初始 ETA
+            _etaMinutes.value = wsMessage.etaMinutes
+            Log.d("OrderTrackingVM", "⏱️ ETA 已设置：${wsMessage.etaMinutes} 分钟")
         }
     }
 
@@ -382,11 +422,19 @@ class OrderTrackingViewModel @Inject constructor(
                 // 显示成功提示
                 val currentState = _uiState.value
                 if (currentState is OrderTrackingUiState.Success) {
-                    // 更新订单状态，添加提示信息
+                    // ⭐ 关键修复：长辈确认后，订单状态应该为 2（正在寻找司机），而不是 3（司机已接单）
                     val updatedOrder = currentState.order.copy(
-                        status = 2  // 司机接单中
+                        status = 2  // ⭐ 修复：正在为您寻找司机...
                     )
                     _uiState.value = OrderTrackingUiState.Success(updatedOrder)
+                    Log.d("OrderTrackingVM", "📊 订单状态更新为 2（正在寻找司机）")
+                    
+                    // ⭐ 新增：主动刷新订单信息，确保与后端同步
+                    viewModelScope.launch(Dispatchers.IO) {
+                        kotlinx.coroutines.delay(500)  // 延迟 500ms，等待后端更新
+                        refreshOrder(currentState.order.id)
+                        Log.d("OrderTrackingVM", "🔄 已主动刷新订单信息")
+                    }
                 }
                 // 触发事件通知UI显示Toast
                 _events.emit(OrderTrackingEvent.ProxyOrderConfirmed(true, null))
@@ -515,8 +563,17 @@ class OrderTrackingViewModel @Inject constructor(
     /**
      * ⭐ 新增：自动完成行程（根据 ETA 推算）
      */
+    private var isCompletingTrip = false  // ⭐ 防抖标志
+    
     private suspend fun autoFinishTrip(orderId: Long) {
+        // ⭐ 防抖：如果已经在完成行程中，直接返回
+        if (isCompletingTrip) {
+            Log.d("OrderTrackingVM", "⏭️ 行程完成请求已在处理中，跳过")
+            return
+        }
+        
         try {
+            isCompletingTrip = true
             Log.d("OrderTrackingVM", "🚀 开始自动完成行程: orderId=$orderId")
             
             val success = finishTrip(orderId)
@@ -524,13 +581,13 @@ class OrderTrackingViewModel @Inject constructor(
             if (success) {
                 Log.d("OrderTrackingVM", "✅ 自动完成行程成功")
             } else {
-                Log.e("OrderTrackingVM", "❌ 自动完成行程失败，将重试...")
-                // 如果失败，5秒后重试一次
-                kotlinx.coroutines.delay(5000)
-                finishTrip(orderId)
+                Log.w("OrderTrackingVM", "⚠️ 自动完成行程失败（可能订单已完成），不重试")
+                // ⭐ 修复：不再重试，避免重复调用 API
             }
         } catch (e: Exception) {
             Log.e("OrderTrackingVM", "❌ 自动完成行程异常", e)
+        } finally {
+            isCompletingTrip = false
         }
     }
 

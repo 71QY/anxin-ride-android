@@ -19,5 +19,16 @@ data class CreateOrderRequest(
     val passengerCount: Int = 1,
     
     @SerialName("remark")
-    val remark: String? = null
+    val remark: String? = null,
+    
+    // ⭐ 新增：起点位置（用于代叫车，长辈位置）
+    @SerialName("startLat")
+    val startLat: Double? = null,
+    
+    @SerialName("startLng")
+    val startLng: Double? = null,
+    
+    // ⭐ 新增：长辈ID（用于代叫车，指定为谁叫车）
+    @SerialName("elderId")
+    val elderId: Long? = null
 )

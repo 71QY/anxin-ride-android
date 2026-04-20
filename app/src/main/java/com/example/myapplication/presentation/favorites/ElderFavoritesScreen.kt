@@ -377,10 +377,14 @@ private fun ElderShareFavoriteDialog(
                                 .fillMaxWidth()
                                 .clickable {
                                     val guardianUserId = guardian.userId
+                                    // ⭐ 修复：先关闭对话框，再发起分享请求
+                                    onDismiss()
+                                    
                                     viewModel.shareFavoriteToGuardian(
                                         favoriteId = favorite.id!!,
                                         guardianUserId = guardianUserId,
                                         onSuccess = {
+                                            Log.d("ElderFavoritesScreen", "✅ [分享成功] 已发送 WebSocket 消息给亲友")
                                             // ⭐ 修复：分享成功后自动跳转到与该亲友的聊天界面
                                             onSuccess(guardianUserId)
                                         },
@@ -388,7 +392,6 @@ private fun ElderShareFavoriteDialog(
                                             Toast.makeText(context, "❌ $error", Toast.LENGTH_SHORT).show()
                                         }
                                     )
-                                    onDismiss()
                                 },
                             colors = CardDefaults.cardColors(
                                 containerColor = MaterialTheme.colorScheme.surfaceVariant

@@ -5,7 +5,10 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.util.Log  // ⭐ 新增：导入 Log
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -63,6 +66,42 @@ fun OrderTrackingScreen(
     val driverLocation by viewModel.driverLocation.collectAsStateWithLifecycle()
     val etaMinutes by viewModel.etaMinutes.collectAsStateWithLifecycle()
     
+    // ⭐ 新增：位置权限请求（确保在任何界面都可以请求权限）
+    var hasRequestedLocationPermission by remember { mutableStateOf(false) }
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+        onResult = { isGranted ->
+            if (isGranted) {
+                Log.d("OrderTrackingScreen", "✅ 位置权限已授予")
+            } else {
+                Log.w("OrderTrackingScreen", "⚠️ 位置权限被拒绝")
+                Toast.makeText(context, "⚠️ 需要位置权限才能显示地图", Toast.LENGTH_LONG).show()
+            }
+        }
+    )
+    
+    // ⭐ 新增：首次进入时请求位置权限
+    LaunchedEffect(Unit) {
+        if (!hasRequestedLocationPermission) {
+            hasRequestedLocationPermission = true
+            // 检查是否已有权限
+            val hasPermission = context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) ==
+                    android.content.pm.PackageManager.PERMISSION_GRANTED
+            
+            if (!hasPermission) {
+                Log.d("OrderTrackingScreen", "🔑 请求位置权限")
+                locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+            } else {
+                Log.d("OrderTrackingScreen", "✅ 已有位置权限")
+            }
+        }
+    }
+    
+    // ⭐ 新增：获取用户角色（长辈端不允许取消订单和选择司机）
+    val profileViewModel: com.example.myapplication.presentation.profile.ProfileViewModel = androidx.hilt.navigation.compose.hiltViewModel()
+    val profile by profileViewModel.profile.collectAsStateWithLifecycle()
+    val isElderMode = profile?.guardMode == 1
+    
     // ⭐ 修复：在 Composable 顶层创建 scope
     val scope = rememberCoroutineScope()
     
@@ -88,8 +127,17 @@ fun OrderTrackingScreen(
                     }
                 }
                 is OrderTrackingEvent.DriverRequestReceived -> {
-                    // ⭐ 显示司机接单确认弹窗
-                    showDriverAcceptDialog = event.wsMessage
+                    // ⭐ 关键修复：只有普通用户（亲友端）才显示司机接单确认弹窗
+                    // 长辈端只能查看司机信息，不能选择/拒绝司机
+                    if (!isElderMode) {
+                        showDriverAcceptDialog = event.wsMessage
+                    } else {
+                        // ⭐ 新增：长辈端虽然不显示弹窗，但需要刷新订单以获取司机信息
+                        scope.launch {
+                            kotlinx.coroutines.delay(500)  // 等待后端更新
+                            viewModel.refreshOrder(orderId)
+                        }
+                    }
                 }
                 is OrderTrackingEvent.DriverRejected -> {
                     Toast.makeText(context, "⚠️ ${event.message}", Toast.LENGTH_LONG).show()
@@ -104,55 +152,72 @@ fun OrderTrackingScreen(
     var startMarker by remember { mutableStateOf<com.amap.api.maps.model.Marker?>(null) }  // ⭐ 新增：起点标记
     var endMarker by remember { mutableStateOf<com.amap.api.maps.model.Marker?>(null) }  // ⭐ 新增：终点标记
     var routePolyline by remember { mutableStateOf<com.amap.api.maps.model.Polyline?>(null) }
+    
+    // ⭐ 关键修复：记录上次的订单状态，用于判断是否需要重新绘制
+    var lastOrderStatus by remember { mutableStateOf<Int?>(null) }
 
     // 初始化追踪
     LaunchedEffect(orderId) {
         viewModel.initTracking(orderId)
     }
 
-    // 监听司机位置变化，平滑移动标记
-    LaunchedEffect(driverLocation) {
-        driverLocation?.let { location ->
-            aMap?.let { map ->
-                if (driverMarker == null) {
-                    // ⭐ 修复：使用小尺寸图标，与定位图标保持一致
-                    android.util.Log.d("OrderTrackingScreen", "🚕 创建司机标记：lat=${location.latitude}, lng=${location.longitude}")
-                    
-                    driverMarker = map.addMarker(
-                        MarkerOptions()
-                            .position(location)
-                            .icon(BitmapDescriptorFactory.fromResource(
-                                R.drawable.ic_taxi_driver  // ⭐ 替换：使用出租车司机图标
-                            ))
-                            .anchor(0.5f, 1.0f)  // ⭐ 修复：锚点改为底部中心，让车标底部对准位置
-                            .title("司机位置")
-                            .snippet("正在赶来中")
-                            .zIndex(10f)  // ⭐ 新增：设置较高的 z-index，确保不被其他元素覆盖
-                    )
-                    android.util.Log.d("OrderTrackingScreen", "✅ 司机标记创建成功")
-                } else {
-                    // 平滑移动标记（2.5秒动画）
-                    android.util.Log.d("OrderTrackingScreen", "🚕 司机位置更新：lat=${location.latitude}, lng=${location.longitude}")
-                    animateMarkerSmoothly(driverMarker!!, location, durationMs = 2500)
-                }
+    // ⭐ 关键修复：监听司机位置变化，平滑移动标记（合并到 uiState 的 LaunchedEffect 中）
+    // 注意：这个 LaunchedEffect 会在 aMap 初始化后自动执行
+    LaunchedEffect(aMap, driverLocation) {
+        if (aMap != null && driverLocation != null) {
+            val map = aMap!!
+            val location = driverLocation!!
+            
+            if (driverMarker == null) {
+                // ⭐ 创建司机标记
+                Log.d("OrderTrackingScreen", "🚕 创建司机标记：lat=${location.latitude}, lng=${location.longitude}")
                 
-                // 移动相机到司机位置
-                map.animateCamera(CameraUpdateFactory.newLatLngZoom(location, 16f))
+                driverMarker = map.addMarker(
+                    MarkerOptions()
+                        .position(location)
+                        .icon(BitmapDescriptorFactory.fromResource(
+                            R.drawable.ic_taxi_driver
+                        ))
+                        .anchor(0.5f, 1.0f)
+                        .title("司机位置")
+                        .snippet("正在赶来中")
+                        .zIndex(10f)
+                )
+                Log.d("OrderTrackingScreen", "✅ 司机标记创建成功")
+            } else {
+                // 平滑移动标记（2.5秒动画）
+                Log.d("OrderTrackingScreen", "🚕 司机位置更新：lat=${location.latitude}, lng=${location.longitude}")
+                animateMarkerSmoothly(driverMarker!!, location, durationMs = 2500)
             }
-        } ?: run {
-            android.util.Log.w("OrderTrackingScreen", "⚠️ driverLocation 为 null")
+            
+            // 移动相机到司机位置
+            map.animateCamera(CameraUpdateFactory.newLatLngZoom(location, 16f))
         }
     }
 
-    // 绘制路线和标记
-    LaunchedEffect(uiState) {
-        if (uiState is OrderTrackingUiState.Success) {
+    // ⭐ 关键修复：绘制路线和标记（监听 uiState 和 aMap）
+    LaunchedEffect(aMap, uiState) {
+        if (uiState is OrderTrackingUiState.Success && aMap != null) {
             val order = (uiState as OrderTrackingUiState.Success).order
-            aMap?.let { map ->
+            val map = aMap!!
+            
+            // ⭐ 关键修复：首次加载或订单状态变化时重新绘制
+            val shouldRedraw = lastOrderStatus == null || lastOrderStatus != order.status
+            
+            if (shouldRedraw) {
+                lastOrderStatus = order.status
+                
                 // 清除旧路线和标记
                 routePolyline?.remove()
                 startMarker?.remove()
                 endMarker?.remove()
+                driverMarker?.remove()  // ⭐ 清除旧的司机标记
+                
+                // 重置标记引用
+                routePolyline = null
+                startMarker = null
+                endMarker = null
+                driverMarker = null
                 
                 // ⭐ 修复：如果有起点和终点坐标，绘制路线
                 val startLat = order.startLat
@@ -161,19 +226,16 @@ fun OrderTrackingScreen(
                 val destLng = order.destLng
                 
                 if (startLat != null && startLng != null && destLat != null && destLng != null) {
-                    android.util.Log.d("OrderTrackingScreen", "🗺️ 开始绘制路线：起点($startLat, $startLng) → 终点($destLat, $destLng)")
-                    
                     // ⭐ 绘制蓝色路线
                     val polyline = map.addPolyline(
                         PolylineOptions()
                             .add(LatLng(startLat, startLng))
                             .add(LatLng(destLat, destLng))
-                            .color(android.graphics.Color.parseColor("#3366FF"))  // ⭐ 修复：使用正确的蓝色
-                            .width(10f)  // ⭐ 增加线宽，更明显
-                            .geodesic(true)  // ⭐ 使用大地曲线，更真实
+                            .color(android.graphics.Color.parseColor("#3366FF"))
+                            .width(10f)
+                            .geodesic(true)
                     )
                     routePolyline = polyline
-                    android.util.Log.d("OrderTrackingScreen", "✅ 路线绘制成功")
                     
                     // ⭐ 添加起点标记（绿色）
                     startMarker = map.addMarker(
@@ -183,7 +245,6 @@ fun OrderTrackingScreen(
                             .title("上车点")
                             .snippet(order.poiName ?: order.destAddress ?: "起点")
                     )
-                    android.util.Log.d("OrderTrackingScreen", "✅ 起点标记添加成功")
                     
                     // ⭐ 添加终点标记（红色）
                     endMarker = map.addMarker(
@@ -193,7 +254,24 @@ fun OrderTrackingScreen(
                             .title("目的地")
                             .snippet(order.poiName ?: order.destAddress ?: "终点")
                     )
-                    android.util.Log.d("OrderTrackingScreen", "✅ 终点标记添加成功")
+                    
+                    // ⭐ 关键修复：如果有司机位置，立即重新创建司机标记
+                    if (order.driverLat != null && order.driverLng != null) {
+                        val driverLatLng = LatLng(order.driverLat, order.driverLng)
+                        try {
+                            driverMarker = map.addMarker(
+                                MarkerOptions()
+                                    .position(driverLatLng)
+                                    .icon(BitmapDescriptorFactory.fromResource(R.drawable.ic_taxi_driver))
+                                    .anchor(0.5f, 1.0f)
+                                    .title("司机位置")
+                                    .snippet("正在赶来中")
+                                    .zIndex(10f)
+                            )
+                        } catch (e: Exception) {
+                            Log.e("OrderTrackingScreen", "❌ 司机标记创建失败", e)
+                        }
+                    }
                     
                     // ⭐ 调整地图视野，显示完整路线
                     val bounds = com.amap.api.maps.model.LatLngBounds.builder()
@@ -201,9 +279,6 @@ fun OrderTrackingScreen(
                         .include(LatLng(destLat, destLng))
                         .build()
                     map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, 100))
-                    
-                } else {
-                    android.util.Log.w("OrderTrackingScreen", "⚠️ 缺少坐标信息，无法绘制路线：startLat=$startLat, startLng=$startLng, destLat=$destLat, destLng=$destLng")
                 }
             }
         }
@@ -258,6 +333,7 @@ fun OrderTrackingScreen(
                     OrderTrackingContent(
                         order = state.order,
                         etaMinutes = etaMinutes,
+                        isElderMode = isElderMode,  // ⭐ 关键修复：传入长辈模式标识
                         aMap = aMap,
                         onMapReady = { map ->
                             aMap = map
@@ -441,6 +517,10 @@ fun OrderTrackingScreen(
                             val result = viewModel.confirmDriverAcceptance(orderId, true)
                             if (result) {
                                 Toast.makeText(context, "✅ 已同意司机接单", Toast.LENGTH_SHORT).show()
+                                // ⭐ 关键修复：确认后主动刷新订单，获取司机信息
+                                kotlinx.coroutines.delay(500)  // 等待后端更新
+                                viewModel.refreshOrder(orderId)
+                                Log.d("OrderTrackingScreen", "🔄 已刷新订单信息，等待司机数据")
                             } else {
                                 Toast.makeText(context, "❌ 操作失败", Toast.LENGTH_SHORT).show()
                             }
@@ -461,6 +541,10 @@ fun OrderTrackingScreen(
                             val result = viewModel.confirmDriverAcceptance(orderId, false)
                             if (result) {
                                 Toast.makeText(context, "⚠️ 已拒绝，正在重新派单...", Toast.LENGTH_LONG).show()
+                                // ⭐ 关键修复：拒绝后主动刷新订单，更新状态
+                                kotlinx.coroutines.delay(500)  // 等待后端更新
+                                viewModel.refreshOrder(orderId)
+                                Log.d("OrderTrackingScreen", "🔄 已刷新订单信息，状态应回到待确认")
                             } else {
                                 Toast.makeText(context, "❌ 操作失败", Toast.LENGTH_SHORT).show()
                             }
@@ -481,6 +565,7 @@ fun OrderTrackingScreen(
 private fun OrderTrackingContent(
     order: com.example.myapplication.data.model.Order,
     etaMinutes: Int?,
+    isElderMode: Boolean,  // ⭐ 新增：是否为长辈模式
     aMap: AMap?,
     onMapReady: (AMap) -> Unit,
     onCallDriver: () -> Unit,
@@ -520,29 +605,33 @@ private fun OrderTrackingContent(
                 // 状态条
                 StatusBanner(order.status, etaMinutes)
 
-                Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
-
-                // 司机信息卡片
-                DriverInfoCard(
-                    driverName = order.driverName,
-                    rating = order.rating,
-                    carNo = order.carNo,
-                    carType = order.carType,
-                    carColor = order.carColor,
-                    driverPhone = order.driverPhone,
-                    onCallDriver = onCallDriver
-                )
+                // ⭐ 关键修复：只有订单状态 >= 3（司机已接单）时才显示司机卡片
+                if (order.status >= 3 && (order.driverName != null || order.driverPhone != null)) {
+                    Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
+                    
+                    // 司机信息卡片
+                    DriverInfoCard(
+                        driverName = order.driverName,
+                        rating = order.rating,
+                        carNo = order.carNo,
+                        carType = order.carType,
+                        carColor = order.carColor,
+                        driverPhone = order.driverPhone,
+                        onCallDriver = onCallDriver
+                    )
+                }
 
                 // 目的地信息
                 DestinationInfo(
-                    destAddress = order.poiName ?: order.destAddress
+                    destAddress = order.poiName ?: order.destAddress ?: "收藏地点"
                 )
 
                 // 操作按钮
                 ActionButtons(
                     orderStatus = order.status,  // ⭐ 新增：传入订单状态
                     etaMinutes = etaMinutes,  // ⭐ 新增：传入 ETA
-                    canCancel = order.status <= 2,  // ⭐ 修复：允许在司机接单前取消（状态0-2）
+                    isElderMode = isElderMode,  // ⭐ 关键修复：传入长辈模式标识
+                    hasDriverPhone = !order.driverPhone.isNullOrBlank(),  // ⭐ 关键修复：是否有司机电话
                     onCancelOrder = onCancelOrder,
                     onCallDriver = onCallDriver,
                     onBoardCar = onBoardCar  // ⭐ 乘客上车
@@ -555,14 +644,15 @@ private fun OrderTrackingContent(
 @Composable
 private fun StatusBanner(status: Int, etaMinutes: Int?) {
     val (statusText, statusColor, icon) = when (status) {
-        0 -> Triple("派单中", Color(0xFFFF9800), Icons.Default.CarCrash)
-        1 -> Triple("待接单", Color(0xFF2196F3), Icons.Default.CarCrash)
-        2, 3 -> Triple("已接单 - 司机赶来中", Color(0xFF2196F3), Icons.Default.DirectionsCar)
-        4 -> Triple("司机已到达 - 请上车", Color(0xFF4CAF50), Icons.Default.CheckCircle)  // ⭐ 修改：更清晰的提示
-        5 -> Triple("行程中 - 前往目的地", Color(0xFF9C27B0), Icons.Default.DirectionsCar)  // ⭐ 修改：更清晰的提示
-        6 -> Triple("✅ 行程已完成", Color(0xFF2E7D32), Icons.Default.CheckCircle)  // ⭐ 修改：显示完成状态
-        7 -> Triple("已取消", Color.Gray, Icons.Default.CarCrash)
-        8 -> Triple("已拒绝", Color.Red, Icons.Default.CarCrash)
+        0 -> Triple("⏳ 等待长辈确认...", Color(0xFFFF9800), Icons.Default.CarCrash)  // ⭐ 修复：更明确的提示
+        1 -> Triple("✅ 已确认，正在寻找司机", Color(0xFF2196F3), Icons.Default.DirectionsCar)  // ⭐ 修复：更准确的描述
+        2 -> Triple("🚕 正在为您寻找司机...", Color(0xFF2196F3), Icons.Default.CarCrash)
+        3 -> Triple("🚗 司机已接单 - 赶来中", Color(0xFF2196F3), Icons.Default.DirectionsCar)
+        4 -> Triple("✅ 司机已到达 - 请上车", Color(0xFF4CAF50), Icons.Default.CheckCircle)
+        5 -> Triple("🚀 行程中 - 前往目的地", Color(0xFF9C27B0), Icons.Default.DirectionsCar)
+        6 -> Triple("✅ 行程已完成", Color(0xFF2E7D32), Icons.Default.CheckCircle)
+        7 -> Triple("❌ 已取消", Color.Gray, Icons.Default.CarCrash)
+        8 -> Triple("❌ 已拒绝", Color.Red, Icons.Default.CarCrash)
         else -> Triple("未知状态", Color.Gray, Icons.Default.CarCrash)
     }
 
@@ -592,7 +682,7 @@ private fun StatusBanner(status: Int, etaMinutes: Int?) {
                     color = statusColor
                 )
                 
-                if (etaMinutes != null && status in 2..3) {
+                if (etaMinutes != null && status in 2..5) {  // ⭐ 修复：状态5（行程中）也显示ETA
                     Text(
                         text = if (etaMinutes <= 0) "即将到达" else "预计${etaMinutes}分钟到达",
                         fontSize = 13.sp,
@@ -760,7 +850,8 @@ private fun DestinationInfo(destAddress: String?) {
 private fun ActionButtons(
     orderStatus: Int,  // ⭐ 修复：传入订单状态
     etaMinutes: Int?,  // ⭐ 新增：预计到达时间
-    canCancel: Boolean,
+    isElderMode: Boolean,  // ⭐ 新增：是否为长辈模式
+    hasDriverPhone: Boolean,  // ⭐ 关键修复：是否有司机电话
     onCancelOrder: () -> Unit,
     onCallDriver: () -> Unit,
     onBoardCar: () -> Unit = {}  // ⭐ 乘客上车
@@ -853,7 +944,8 @@ private fun ActionButtons(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                if (canCancel) {
+                // ⭐ 修复：普通用户在订单完成前都可以取消订单（status < 6）
+                if (!isElderMode && orderStatus < 6) {  
                     OutlinedButton(
                         onClick = onCancelOrder,
                         modifier = Modifier.weight(1f),
@@ -863,12 +955,15 @@ private fun ActionButtons(
                     }
                 }
                 
-                Button(
-                    onClick = onCallDriver,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1677FF))
-                ) {
-                    Text("联系司机", fontSize = 15.sp)
+                // ⭐ 关键修复：只有订单状态 >= 3（司机已接单）且有司机电话时才显示联系司机按钮
+                if (orderStatus >= 3 && hasDriverPhone) {
+                    Button(
+                        onClick = onCallDriver,
+                        modifier = Modifier.weight(if (!isElderMode && orderStatus < 6) 1f else 1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1677FF))
+                    ) {
+                        Text("联系司机", fontSize = 15.sp)
+                    }
                 }
             }
         }
@@ -915,10 +1010,12 @@ private fun animateMarkerSmoothly(
  */
 private fun setupInitialMapView(map: AMap, order: com.example.myapplication.data.model.Order) {
     // 优先显示司机位置，否则显示起点
-    val targetLat = order.driverLat ?: order.startLat ?: order.destLat ?: return
-    val targetLng = order.driverLng ?: order.startLng ?: order.destLng ?: return
+    val targetLat = order.driverLat ?: order.startLat ?: order.destLat
+    val targetLng = order.driverLng ?: order.startLng ?: order.destLng
     
-    map.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(targetLat, targetLng), 15f))
+    if (targetLat != null && targetLng != null) {
+        map.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(targetLat, targetLng), 15f))
+    }
 }
 
 /**

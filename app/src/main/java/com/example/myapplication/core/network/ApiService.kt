@@ -209,6 +209,7 @@ interface ApiService {
 
     @GET("order/list")
     suspend fun getOrderList(
+        @Header("X-User-Id") userId: Long,  // ⭐ 修复：添加userId Header，让后端识别用户
         @Query("status") status: Int?,
         @Query("page") page: Int = 1,
         @Query("size") size: Int = 10
@@ -445,7 +446,7 @@ interface ApiService {
     suspend fun markAsRead(
         @Header("X-User-Id") userId: Long,
         @Path("senderId") senderId: Long
-    ): Result<Unit>
+    ): Result<Any>  // ⭐ 修复：后端返回 data 是数字，使用 Any 兼容
 
     /**
      * 查询未读数

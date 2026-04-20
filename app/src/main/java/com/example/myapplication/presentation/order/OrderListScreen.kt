@@ -1,5 +1,6 @@
 package com.example.myapplication.presentation.order
 
+import android.util.Log  // ⭐ 新增：导入 Log
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -32,9 +33,14 @@ fun OrderListScreen(
     val profile by profileViewModel.profile.collectAsStateWithLifecycle()
     val isElderMode = profile?.guardMode == 1
     
-    // ⭐ 新增：根据长辈模式加载订单
-    LaunchedEffect(isElderMode) {
-        viewModel.loadOrders(loadMore = false, isElderMode = isElderMode)
+    // ⭐ 修复：等待 profile 加载完成后再加载订单列表
+    LaunchedEffect(profile) {
+        if (profile != null) {
+            Log.d("OrderListScreen", "📦 Profile 已加载，开始加载订单列表，isElderMode=$isElderMode")
+            viewModel.loadOrders(loadMore = false, isElderMode = isElderMode)
+        } else {
+            Log.d("OrderListScreen", "⏳ 等待 Profile 加载...")
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -113,9 +119,10 @@ fun OrderCard(
                     color = when (order.status) {
                         0 -> MaterialTheme.colorScheme.primary  // 待确认
                         1, 2, 3 -> MaterialTheme.colorScheme.tertiary  // 已确认/等待司机/司机已接单
-                        4 -> MaterialTheme.colorScheme.secondary  // 行程中
-                        5 -> Color.Green  // 已完成
-                        6, 7 -> MaterialTheme.colorScheme.error  // 已取消/已拒绝
+                        4 -> MaterialTheme.colorScheme.secondary  // 司机已到达
+                        5 -> Color.Green  // 行程中
+                        6 -> Color(0xFF2E7D32)  // 已完成
+                        7, 8 -> MaterialTheme.colorScheme.error  // 已取消/已拒绝
                         else -> MaterialTheme.colorScheme.onSurfaceVariant
                     }
                 )

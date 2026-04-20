@@ -31,8 +31,11 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Place  // ⭐ 新增：地点图标
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card  // ⭐ 新增
+import androidx.compose.material3.CardDefaults  // ⭐ 新增
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -41,6 +44,8 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.shape.RoundedCornerShape  // ⭐ 新增
+import androidx.compose.foundation.layout.Row  // ⭐ 新增
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
@@ -53,6 +58,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner  // ⭐ 新增：用于获取 LifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -87,6 +93,7 @@ import com.iflytek.cloud.SpeechUtility
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext  // ⭐ 新增：用于切换协程上下文
 import com.example.myapplication.R
 
 @AndroidEntryPoint
@@ -284,10 +291,13 @@ class MainActivity : ComponentActivity() {
                             
                             // ⭐ 修复：在 NavGraph 作用域内创建 ViewModel
                             val homeViewModel: HomeViewModel = androidx.hilt.navigation.compose.hiltViewModel()
+                            val chatViewModel: ChatViewModel = androidx.hilt.navigation.compose.hiltViewModel()  // ⭐ 修复：在此作用域内创建 chatViewModel
                             val isElderMode by homeViewModel.isElderMode.collectAsStateWithLifecycle()  // ⭐ 修复：使用 collectAsStateWithLifecycle
                             
                             if (contactId != null) {
                                 PrivateChatScreen(
+                                    viewModel = androidx.hilt.navigation.compose.hiltViewModel(),
+                                    chatViewModel = chatViewModel,  // ⭐ 新增：传入 ChatViewModel，实时接收 WebSocket 消息
                                     guardianId = contactId,
                                     guardianName = contactName,
                                     onBackClick = { navController.popBackStack() },
@@ -296,16 +306,77 @@ class MainActivity : ComponentActivity() {
                                         // ⭐ 一键填充到打车界面
                                         Log.d("MainActivity", "📍 [私聊] 从聊天跳转到首页，目的地：$name")
                                         
-                                        // 保存目的地信息到 SharedPreferences
+                                        // ⭐ 修复：同时保存目的地和长辈实时位置（作为代叫车起点）
                                         val prefs = context.getSharedPreferences("taxi_destination", android.content.Context.MODE_PRIVATE)
                                         prefs.edit()
                                             .putString("destination_name", name)
                                             .putFloat("destination_lat", lat.toFloat())
                                             .putFloat("destination_lng", lng.toFloat())
                                             .putBoolean("should_apply", true)
+                                            // ⭐ 新增：保存长辈实时位置（从 ChatViewModel 获取）
                                             .apply()
                                         
-                                        // ⭐ 修复：通过 NavHostController 返回到 main 路由
+                                        // ⭐ 从 ChatViewModel 获取长辈实时位置并保存
+                                        val sharedLocation = chatViewModel.sharedLocation.value
+                                        if (sharedLocation?.elderCurrentLat != null && sharedLocation.elderCurrentLng != null) {
+                                            prefs.edit()
+                                                .putFloat("elder_start_lat", sharedLocation.elderCurrentLat.toFloat())
+                                                .putFloat("elder_start_lng", sharedLocation.elderCurrentLng.toFloat())
+                                                .putLong("elder_location_timestamp", sharedLocation.elderLocationTimestamp ?: System.currentTimeMillis())
+                                                .apply()
+                                            Log.d("MainActivity", "✅ [私聊] 已保存长辈实时位置：lat=${sharedLocation.elderCurrentLat}, lng=${sharedLocation.elderCurrentLng}")
+                                        } else {
+                                            Log.w("MainActivity", "⚠️ [私聊] 未收到长辈实时位置，将使用当前位置")
+                                        }
+                                        
+                                        // ⭐ 关键修复：先跳转到首页，然后延迟创建订单
+                                        navController.navigate("main") {
+                                            popUpTo(navController.graph.startDestinationId) {
+                                                inclusive = false
+                                            }
+                                            launchSingleTop = true
+                                        }
+                                        
+                                        // ⭐ 延迟创建订单，确保首页已经渲染
+                                        val currentActivity = this@MainActivity
+                                        currentActivity.lifecycleScope.launch {
+                                            Log.d("MainActivity", "⏰ [延迟任务] 开始等待 500ms...")
+                                            kotlinx.coroutines.delay(500)
+                                            Log.d("MainActivity", "⏰ [延迟任务] 等待完成，准备创建订单")
+                                            // 在 UI 线程中调用 createOrder
+                                            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                Log.d("MainActivity", "🚕 [私聊] 开始创建代叫车订单：$name")
+                                                // ⭐ 关键修复：传递长辈ID（从 ChatViewModel 获取）
+                                                val elderId = chatViewModel.sharedLocation.value?.elderId
+                                                Log.d("MainActivity", "🚕 [私聊] 长辈ID：$elderId")
+                                                Log.d("MainActivity", "🚕 [私聊] 目的地：$name, lat=$lat, lng=$lng")
+                                                homeViewModel.createOrder(name, elderId)
+                                                Log.d("MainActivity", "✅ [私聊] createOrder 已调用")
+                                                
+                                                // ⭐ 修复：不清除 sharedLocation，让长辈端可以持续显示卡片
+                                                // chatViewModel.clearSharedLocation()  // ❌ 已移除
+                                            }
+                                        }
+                                    },
+                                    onNavigateToOrderTracking = { orderId ->
+                                        // ⭐ 关键修复：已确认订单，直接跳转到行程追踪界面
+                                        Log.d("MainActivity", "📋 [私聊] 查看订单详情，orderId=$orderId")
+                                        navController.navigate("order_tracking/$orderId")
+                                    },
+                                    onNavigateToElderLocation = { elderName, lat, lng ->
+                                        // ⭐ 新增：跳转到长辈位置地图界面
+                                        Log.d("MainActivity", "📍 [私聊] 查看长辈位置 - $elderName: lat=$lat, lng=$lng")
+                                        // TODO: 创建专门的地图界面显示长辈位置
+                                        // 目前先跳转到首页，并设置地图中心点为长辈位置
+                                        val prefs = context.getSharedPreferences("elder_location_view", android.content.Context.MODE_PRIVATE)
+                                        prefs.edit()
+                                            .putString("elder_name", elderName)
+                                            .putFloat("elder_lat", lat.toFloat())
+                                            .putFloat("elder_lng", lng.toFloat())
+                                            .putBoolean("should_focus", true)
+                                            .apply()
+                                        
+                                        // 跳转到首页
                                         navController.navigate("main") {
                                             popUpTo(navController.graph.startDestinationId) {
                                                 inclusive = false
@@ -434,17 +505,8 @@ fun MyApplicationApp(
                 // 清除标记
                 prefs.edit().putBoolean("should_navigate", false).apply()
                 
-                // ⭐ 修复：将地点信息保存到 SharedPreferences，供 PrivateChatScreen 读取
-                val chatPrefs = context.getSharedPreferences("chat_location_$elderId", android.content.Context.MODE_PRIVATE)
-                chatPrefs.edit()
-                    .putString("location_name", favoriteName)
-                    .putString("location_address", favoriteAddress)
-                    .putFloat("location_lat", favoriteLat.toFloat())
-                    .putFloat("location_lng", favoriteLng.toFloat())
-                    .putLong("timestamp", System.currentTimeMillis())
-                    .apply()
-                
-                Log.d("MyApplicationApp", "💾 已保存地点信息：$favoriteName, lat=$favoriteLat, lng=$favoriteLng")
+                // ⭐ 修复：不再保存 SharedPreferences，ChatViewModel 已经通过 StateFlow 实时更新
+                Log.d("MyApplicationApp", "✅ 将使用 WebSocket StateFlow 实时接收地点信息")
                 
                 // 跳转到私聊界面
                 navController.navigate("private_chat/$elderId/$elderName")
@@ -514,6 +576,9 @@ fun MyApplicationApp(
             }
         }
     ) { paddingValues ->
+        // ⭐ 新增：获取 LifecycleOwner 用于启动协程
+        val lifecycleOwner = LocalLifecycleOwner.current
+        
         // ⭐ 修复：将 isElderMode 定义移到 when 之前，确保所有分支都能访问
         val isElderMode by homeViewModel.isElderMode.collectAsStateWithLifecycle()
         
@@ -524,13 +589,85 @@ fun MyApplicationApp(
         var requesterName by remember { mutableStateOf("") }
         var destination by remember { mutableStateOf("") }
         
+        // ⭐ 新增：全局收藏分享弹窗（普通用户在任何界面都能收到）
+        val sharedLocation by chatViewModel.sharedLocation.collectAsStateWithLifecycle()
+        var showGlobalShareDialog by remember { mutableStateOf(false) }
+        var pendingSharedLocation by remember { mutableStateOf<Triple<String, Double, Double>?>(null) }
+        var pendingSharedElderName by remember { mutableStateOf("") }
+        // ⭐ 关键修复：使用 rememberSaveable 避免重组时重置，防止无限弹窗
+        var hasShownShareDialog by rememberSaveable { mutableStateOf<Map<Long, Boolean>>(emptyMap()) }
+        
+        // ⭐ 修复：使用 snapshotFlow 监听 StateFlow 的变化，确保每次更新都触发
+        LaunchedEffect(Unit) {
+            androidx.compose.runtime.snapshotFlow { sharedLocation }.collect { location ->
+                if (location != null && !isElderMode) {
+                    val elderId = location.elderId
+                    val alreadyShown = hasShownShareDialog[elderId] == true
+                    
+                    if (!alreadyShown) {
+                        Log.d("MainActivity", "🔔 [全局] 收到收藏分享：${location.favoriteName}")
+                        
+                        // ⭐ 修复：检查当前是否在私聊界面
+                        val isInPrivateChat = currentDestination?.startsWith("private_chat") == true
+                        
+                        if (!isInPrivateChat) {
+                            // 不在私聊界面，显示全局弹窗
+                            pendingSharedLocation = Triple(
+                                location.favoriteName,
+                                location.latitude,
+                                location.longitude
+                            )
+                            pendingSharedElderName = location.elderName
+                            showGlobalShareDialog = true
+                            hasShownShareDialog = hasShownShareDialog + (elderId to true)  // ⭐ 标记该长辈已弹窗
+                            Log.d("MainActivity", "✅ [全局] 显示全局弹窗")
+                        } else {
+                            // 在私聊界面，不弹窗，让 PrivateChatScreen 显示卡片
+                            Log.d("MainActivity", "⏭️ [全局] 当前在私聊界面，跳过全局弹窗，由 PrivateChatScreen 显示卡片")
+                        }
+                    } else {
+                        Log.d("MainActivity", "⏭️ [全局] 该长辈的分享已弹过窗，跳过")
+                    }
+                }
+            }
+        }
+        
+        // ⭐ 新增：全局监听代叫车请求事件（无论当前在哪个页面都能响应）
+        LaunchedEffect(Unit) {
+            MyApplication.proxyOrderRequestEvent.collect { event ->
+                Log.d("MainActivity", "🚗 [全局事件] 收到代叫车请求：orderId=${event.orderId}, from=${event.requesterName}")
+                
+                // ⭐ 只有长辈端才显示确认弹窗
+                if (isElderMode) {
+                    pendingOrderId = event.orderId
+                    requesterName = event.requesterName
+                    destination = event.destination
+                    showGlobalProxyOrderDialog = true
+                    
+                    Log.d("MainActivity", "✅ [全局事件] 已触发代叫车弹窗")
+                } else {
+                    Log.d("MainActivity", "⏭️ [全局事件] 当前是普通用户，忽略代叫车请求")
+                }
+            }
+        }
+        
+        // ⭐ 修复：监听 HomeViewModel 的 _proxyOrderRequest StateFlow（来自 WebSocket 推送）
         LaunchedEffect(proxyOrderRequest) {
             if (isElderMode && proxyOrderRequest != null) {
                 Log.d("MainActivity", "🔔 [全局] 收到代叫车请求：${proxyOrderRequest!!.orderId}")
+                
+                // ⭐ 关键修复：检查是否已经显示过该订单的弹窗
+                if (pendingOrderId == proxyOrderRequest!!.orderId) {
+                    Log.d("MainActivity", "⏭️ [全局] 该订单已显示过弹窗，跳过")
+                    return@LaunchedEffect
+                }
+                
                 pendingOrderId = proxyOrderRequest!!.orderId
                 requesterName = proxyOrderRequest!!.requesterName
                 destination = proxyOrderRequest!!.destination
                 showGlobalProxyOrderDialog = true
+                
+                Log.d("MainActivity", "✅ [全局] 已触发代叫车弹窗")
                 
                 // 清除请求，避免重复弹出
                 homeViewModel.clearProxyOrderRequest()
@@ -553,6 +690,19 @@ fun MyApplicationApp(
                         // 其他事件忽略
                     }
                 }
+            }
+        }
+        
+        // ⭐ 新增：监听全局导航事件（来自 ChatViewModel）
+        LaunchedEffect(Unit) {
+            MyApplication.navigateToOrderTrackingEvent.collect { orderId ->
+                Log.d("MainActivity", "🚀 [全局事件] 收到导航到行程追踪事件: orderId=$orderId")
+                // ⭐ 先切换到首页，再跳转到订单追踪页面
+                currentDestination = "home"
+                // 延迟一下，确保首页已经渲染
+                kotlinx.coroutines.delay(300)
+                navController.navigate("order_tracking/$orderId")
+                Log.d("MainActivity", "✅ [全局事件] 已执行导航: order_tracking/$orderId")
             }
         }
         
@@ -597,8 +747,15 @@ fun MyApplicationApp(
                         onClick = {
                             pendingOrderId?.let { orderId ->
                                 Log.d("MainActivity", "✅ [全局] 长辈接受代叫车：orderId=$orderId")
+                                Log.d("MainActivity", "🔍 [调试] pendingOrderId 的值: $pendingOrderId")
+                                Log.d("MainActivity", "🔍 [调试] orderId 的值: $orderId")
+                                if (orderId == 0L) {
+                                    Log.e("MainActivity", "❌❌❌ 警告：orderId 为 0！这会导致后端无法正确处理")
+                                }
                                 homeViewModel.confirmProxyOrder(orderId, confirmed = true)
                                 android.widget.Toast.makeText(context, "✅ 已接受叫车请求", android.widget.Toast.LENGTH_LONG).show()
+                            } ?: run {
+                                Log.e("MainActivity", "❌❌❌ 错误：pendingOrderId 为 null！")
                             }
                             showGlobalProxyOrderDialog = false
                             pendingOrderId = null
@@ -615,8 +772,15 @@ fun MyApplicationApp(
                         onClick = {
                             pendingOrderId?.let { orderId ->
                                 Log.d("MainActivity", "❌ [全局] 长辈拒绝代叫车：orderId=$orderId")
+                                Log.d("MainActivity", "🔍 [调试] pendingOrderId 的值: $pendingOrderId")
+                                Log.d("MainActivity", "🔍 [调试] orderId 的值: $orderId")
+                                if (orderId == 0L) {
+                                    Log.e("MainActivity", "❌❌❌ 警告：orderId 为 0！这会导致后端无法正确处理")
+                                }
                                 homeViewModel.confirmProxyOrder(orderId, confirmed = false, rejectReason = "暂时不需要")
                                 android.widget.Toast.makeText(context, "⚠️ 已拒绝叫车请求", android.widget.Toast.LENGTH_LONG).show()
+                            } ?: run {
+                                Log.e("MainActivity", "❌❌❌ 错误：pendingOrderId 为 null！")
                             }
                             showGlobalProxyOrderDialog = false
                             pendingOrderId = null
@@ -626,6 +790,218 @@ fun MyApplicationApp(
                         Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("拒绝", fontSize = 16.sp)
+                    }
+                }
+            )
+        }
+        
+        // ⭐ 新增：全局收藏分享弹窗
+        if (showGlobalShareDialog && pendingSharedLocation != null) {
+            AlertDialog(
+                onDismissRequest = {
+                    // 不允许点击外部关闭
+                },
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Place,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "📍 收到分享的地点",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                },
+                text = {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            "$pendingSharedElderName 分享了以下地点给您：",
+                            fontSize = 16.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = pendingSharedLocation!!.first,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                        
+                        Divider()
+                        
+                        Text(
+                            "是否立即为她代叫车？",
+                            fontSize = 15.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val (name, lat, lng) = pendingSharedLocation!!
+                            Log.d("MainActivity", "🚕 [全局弹窗] 用户点击立即叫车：$name")
+                                                    
+                            // ⭐ 新增：获取长辈实时位置（作为代叫车起点）
+                            val elderCurrentLat = sharedLocation?.elderCurrentLat
+                            val elderCurrentLng = sharedLocation?.elderCurrentLng
+                            val elderLocationTimestamp = sharedLocation?.elderLocationTimestamp
+                                                    
+                            // 检查长辈位置是否有效（不超过 5 分钟）
+                            val isElderLocationValid = elderCurrentLat != null && 
+                                elderCurrentLng != null && 
+                                elderLocationTimestamp != null &&
+                                (System.currentTimeMillis() - elderLocationTimestamp) < 5 * 60 * 1000
+                                                    
+                            if (isElderLocationValid) {
+                                Log.d("MainActivity", "✅ 使用长辈实时位置作为起点：lat=$elderCurrentLat, lng=$elderCurrentLng")
+                            } else {
+                                Log.w("MainActivity", "⚠️ 长辈位置无效或过期，将使用当前位置作为起点")
+                            }
+                                                    
+                            // ⭐ 修复：先保存 elderId 和 elderName，避免后面被清空
+                            val elderId = sharedLocation?.elderId
+                            val elderName = pendingSharedElderName
+                                                    
+                            // 清除全局弹窗状态
+                            showGlobalShareDialog = false
+                            pendingSharedLocation = null
+                            pendingSharedElderName = ""
+                            // ⭐ 关键修复：不要立即移除标志，等订单创建完成后再移除
+                            // if (elderId != null) {
+                            //     hasShownShareDialog = hasShownShareDialog - elderId
+                            // }
+                                                    
+                            // ⭐ 修复：不清除 sharedLocation，以便私聊界面可以显示卡片
+                            // chatViewModel.clearSharedLocation()  // ❌ 已移除
+                                                    
+                            // ⭐ 方案 A：直接跳转到首页并自动填充目的地（不经过私聊界面）
+                            Log.d("MainActivity", "✅ [全局弹窗] 直接跳转到首页并填充目的地")
+                            currentDestination = "home"
+                                                    
+                            // ⭐ 保存目的地到 SharedPreferences，供 HomeScreen 读取
+                            val prefs = context.getSharedPreferences("taxi_destination", android.content.Context.MODE_PRIVATE)
+                            prefs.edit()
+                                .putString("destination_name", name)
+                                .putFloat("destination_lat", lat.toFloat())
+                                .putFloat("destination_lng", lng.toFloat())
+                                .putBoolean("should_apply", true)
+                                .apply()
+                                                    
+                            // ⭐ 保存长辈实时位置（作为代叫车起点）
+                            if (isElderLocationValid && elderCurrentLat != null && elderCurrentLng != null) {
+                                prefs.edit()
+                                    .putFloat("elder_start_lat", elderCurrentLat.toFloat())
+                                    .putFloat("elder_start_lng", elderCurrentLng.toFloat())
+                                    .putLong("elder_location_timestamp", elderLocationTimestamp ?: System.currentTimeMillis())
+                                    .apply()
+                                Log.d("MainActivity", "✅ [全局弹窗] 已保存长辈实时位置到 SharedPreferences")
+                            }
+                                                    
+                            // ⭐ 标记该分享已被处理（用于私聊界面判断是否显示"一键填充"按钮）
+                            if (elderId != null) {
+                                prefs.edit()
+                                    .putBoolean("share_processed_$elderId", true)
+                                    .apply()
+                                Log.d("MainActivity", "✅ [全局弹窗] 已标记分享为已处理：elderId=$elderId")
+                            }
+                                                    
+                            // ⭐ 关键修复：延迟设置目的地，确保首页已经渲染
+                            lifecycleOwner.lifecycleScope.launch {
+                                Log.d("MainActivity", "⏰ [全局弹窗-延迟任务] 开始等待 500ms...")
+                                kotlinx.coroutines.delay(500)
+                                Log.d("MainActivity", "⏰ [全局弹窗-延迟任务] 等待完成，准备设置目的地")
+                                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                    Log.d("MainActivity", "🚕 [全局弹窗] 开始设置目的地：$name")
+                                    Log.d("MainActivity", "🚕 [全局弹窗] 长辈ID：$elderId")
+                                    Log.d("MainActivity", "🚕 [全局弹窗] 目的地：$name, lat=$lat, lng=$lng")
+                                    
+                                    // ⭐ 关键修复：只设置目的地和起点，不自动创建订单
+                                    if (isElderLocationValid && elderCurrentLat != null && elderCurrentLng != null) {
+                                        Log.d("MainActivity", "✅ [全局弹窗] 使用长辈实时位置作为起点：lat=$elderCurrentLat, lng=$elderCurrentLng")
+                                        homeViewModel.setDestinationFromFavorite(
+                                            name, lat, lng,
+                                            startLat = elderCurrentLat,
+                                            startLng = elderCurrentLng
+                                        )
+                                    } else {
+                                        Log.w("MainActivity", "⚠️ [全局弹窗] 长辈位置无效，将使用当前位置作为起点")
+                                        homeViewModel.setDestinationFromFavorite(name, lat, lng)
+                                    }
+                                    
+                                    Log.d("MainActivity", "✅ [全局弹窗] 已设置目的地，请用户在 POI 详情对话框中点击“确认叫车”")
+                                    
+                                    // ⭐ 关键修复：订单创建成功后，移除标志，允许下次分享时再次弹窗
+                                    if (elderId != null) {
+                                        hasShownShareDialog = hasShownShareDialog - elderId
+                                        Log.d("MainActivity", "✅ [全局弹窗] 已移除 elderId=$elderId 的标志，允许下次分享")
+                                    }
+                                    
+                                    // ⭐ 修复：不清除 sharedLocation，让长辈端可以持续显示卡片
+                                    // chatViewModel.clearSharedLocation()  // ❌ 已移除
+                                }
+                            }
+                        },
+                        modifier = Modifier.height(48.dp)
+                    ) {
+                        Icon(Icons.Default.Place, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("立即叫车", fontSize = 16.sp)
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            Log.d("MainActivity", "ℹ️ [全局弹窗] 用户稍后查看")
+                            
+                            val elderId = sharedLocation?.elderId ?: 0L
+                            val elderName = pendingSharedElderName
+                            
+                            // 清除全局弹窗状态
+                            showGlobalShareDialog = false
+                            pendingSharedLocation = null
+                            pendingSharedElderName = ""
+                            // ⭐ 修复：从 Map 中移除该长辈的标志，允许下次分享时再次弹窗
+                            if (elderId > 0) {
+                                hasShownShareDialog = hasShownShareDialog - elderId
+                            }
+                            
+                            // ⭐ 修复：不清除 sharedLocation，让 PrivateChatScreen 可以显示卡片
+                            // chatViewModel.clearSharedLocation()  // ❌ 已移除
+                            
+                            Log.d("MainActivity", "✅ [全局弹窗] 保留 sharedLocation，跳转到私聊界面显示卡片")
+                            
+                            // 跳转到私聊界面
+                            if (elderId > 0) {
+                                navController.navigate("private_chat/$elderId/$elderName")
+                            }
+                        },
+                        modifier = Modifier.height(48.dp)
+                    ) {
+                        Text("稍后查看", fontSize = 16.sp)
                     }
                 }
             )
@@ -644,14 +1020,60 @@ fun MyApplicationApp(
                             val destLat = prefs.getFloat("destination_lat", 0f).toDouble()
                             val destLng = prefs.getFloat("destination_lng", 0f).toDouble()
                             
+                            // ⭐ 新增：读取长辈实时位置（作为代叫车起点）
+                            val elderStartLat = prefs.getFloat("elder_start_lat", 0f).toDouble()
+                            val elderStartLng = prefs.getFloat("elder_start_lng", 0f).toDouble()
+                            val elderLocationTimestamp = prefs.getLong("elder_location_timestamp", 0L)
+                            
+                            // 检查长辈位置是否有效（不超过 5 分钟）
+                            val isElderLocationValid = elderStartLat != 0.0 && 
+                                elderStartLng != 0.0 && 
+                                elderLocationTimestamp != 0L &&
+                                (System.currentTimeMillis() - elderLocationTimestamp) < 5 * 60 * 1000
+                            
                             if (!destName.isNullOrBlank() && destLat != 0.0 && destLng != 0.0) {
                                 Log.d("MyApplicationApp", "📍 应用来自聊天的目的地：$destName")
-                                homeViewModel.setDestinationFromFavorite(destName, destLat, destLng)
+                                
+                                if (isElderLocationValid) {
+                                    Log.d("MyApplicationApp", "✅ 使用长辈实时位置作为起点：lat=$elderStartLat, lng=$elderStartLng")
+                                    homeViewModel.setDestinationFromFavorite(
+                                        destName, destLat, destLng,
+                                        startLat = elderStartLat,
+                                        startLng = elderStartLng
+                                    )
+                                } else {
+                                    Log.w("MyApplicationApp", "⚠️ 长辈位置无效或过期，将使用当前位置作为起点")
+                                    homeViewModel.setDestinationFromFavorite(destName, destLat, destLng)
+                                }
                                 
                                 // 清除标记
                                 prefs.edit().putBoolean("should_apply", false).apply()
                             }
                         }
+                    }
+                    
+                    // ⭐ 新增：检查是否需要聚焦到长辈位置
+                    try {
+                        val elderPrefs = context.getSharedPreferences("elder_location_view", android.content.Context.MODE_PRIVATE)
+                        val shouldFocus = elderPrefs.getBoolean("should_focus", false)
+                        
+                        if (shouldFocus) {
+                            val elderName = elderPrefs.getString("elder_name", "")
+                            val elderLat = elderPrefs.getFloat("elder_lat", 0f).toDouble()
+                            val elderLng = elderPrefs.getFloat("elder_lng", 0f).toDouble()
+                            
+                            if (!elderName.isNullOrBlank() && elderLat != 0.0 && elderLng != 0.0) {
+                                Log.d("MyApplicationApp", "📍 聚焦到长辈位置：$elderName - lat=$elderLat, lng=$elderLng")
+                                
+                                // ⭐ 调用 HomeViewModel 的方法，设置地图中心点为长辈位置
+                                homeViewModel.focusOnElderLocation(elderName, elderLat, elderLng)
+                                
+                                // 清除标记
+                                elderPrefs.edit().putBoolean("should_focus", false).apply()
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("MyApplicationApp", "❌ 处理长辈位置聚焦失败", e)
                     }
                     
                     HomeScreen(
@@ -766,11 +1188,6 @@ fun MyApplicationApp(
                             // ⭐ 跳转到账号安全页面
                             Log.d("MainActivity", "🔒 === 点击账号安全，跳转至 AccountSecurityScreen ===")
                             currentDestination = "account_security"
-                        },
-                        onNavigateToTravelRecords = {
-                            // ⭐ 跳转到出行记录页面
-                            Log.d("MainActivity", "🚗 === 点击出行记录，跳转至 TravelRecordsScreen ===")
-                            currentDestination = "travel_records"
                         },
                         onLogout = {
                             // ⭐ 修复：退出登录后返回登录页面

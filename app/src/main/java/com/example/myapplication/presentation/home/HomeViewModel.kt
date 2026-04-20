@@ -8,6 +8,7 @@
     import android.os.Build
     import android.util.LruCache
     import android.util.Log
+    import android.widget.Toast  // ⭐ 新增：Toast 导入
     import androidx.core.app.NotificationCompat
     // import com.example.myapplication.R  // ⭐ R类会在编译后自动生成
     import androidx.compose.runtime.getValue
@@ -147,6 +148,10 @@
         private val _clickedLocation = MutableStateFlow<LatLng?>(null)
         val clickedLocation: StateFlow<LatLng?> = _clickedLocation.asStateFlow()
     
+        // ⭐ 新增：起点位置（用于代叫车，长辈位置）
+        private val _startLocation = MutableStateFlow<LatLng?>(null)
+        val startLocation: StateFlow<LatLng?> = _startLocation.asStateFlow()
+    
         private val _isListening = MutableStateFlow(false)
         val isListening: StateFlow<Boolean> = _isListening.asStateFlow()
     
@@ -275,8 +280,22 @@
         }
         
         // ⭐ 新增：从收藏设置目的地（带坐标，直接显示POI详情）
-        fun setDestinationFromFavorite(name: String, latitude: Double, longitude: Double) {
+        fun setDestinationFromFavorite(
+            name: String, 
+            latitude: Double, 
+            longitude: Double,
+            startLat: Double? = null,  // ⭐ 新增：起点纬度（长辈位置）
+            startLng: Double? = null   // ⭐ 新增：起点经度（长辈位置）
+        ) {
             Log.d("HomeViewModel", "📍 从收藏设置目的地：$name, lat=$latitude, lng=$longitude")
+            if (startLat != null && startLng != null) {
+                Log.d("HomeViewModel", "🚗 使用长辈位置作为起点：lat=$startLat, lng=$startLng")
+                // ⭐ 保存起点位置
+                _startLocation.value = com.amap.api.maps.model.LatLng(startLat, startLng)
+            } else {
+                // ⭐ 清除之前的起点
+                _startLocation.value = null
+            }
             
             // ⭐ 设置目的地
             _destination.value = name
@@ -365,6 +384,24 @@
             }
             
             Log.d("HomeViewModel", "✅ 收藏目的地设置完成，POI详情对话框将自动显示")
+        }
+        
+        // ⭐ 新增：聚焦到长辈位置（在地图上显示长辈实时位置）
+        fun focusOnElderLocation(elderName: String, latitude: Double, longitude: Double) {
+            Log.d("HomeViewModel", "📍 聚焦到长辈位置：$elderName - lat=$latitude, lng=$longitude")
+            
+            // ⭐ 设置点击位置为长辈位置
+            _clickedLocation.value = com.amap.api.maps.model.LatLng(latitude, longitude)
+            
+            // ⭐ 清除之前的目的地和 POI 详情
+            _destination.value = ""  // ⭐ 修复：使用空字符串而不是 null
+            _poiDetail.value = null
+            _showPoiDetailDialog.value = false
+            
+            // ⭐ 清空搜索结果
+            clearSearchResults()
+            
+            Log.d("HomeViewModel", "✅ 已设置地图中心点为长辈位置，地图将自动移动")
         }
     
         // ⭐ 新增：从 POI 详情对话框添加收藏
@@ -1221,9 +1258,9 @@
         }
     
         // ⭐ 修改：通过 WebSocket 创建订单
-        fun createOrder(destName: String) {
+        fun createOrder(destName: String, elderId: Long? = null) {
             Log.d("HomeViewModel", "=== 开始创建订单 (HTTP API 方式) ===")
-            Log.d("HomeViewModel", "目的地名称参数：$destName")
+            Log.d("HomeViewModel", "目的地名称参数：$destName, elderId: $elderId")
             
             viewModelScope.launch {
                 try {
@@ -1304,12 +1341,42 @@
                     }
                     
                     // ⭐ 修改：使用 HTTP API 创建订单 (能直接获取响应)
+                    // ⭐ 关键修复：如果 _startLocation 为 null，使用当前位置作为起点
+                    val startLat = _startLocation.value?.latitude ?: _currentLocation.value?.latitude
+                    val startLng = _startLocation.value?.longitude ?: _currentLocation.value?.longitude
+                    
+                    if (startLat == null || startLng == null) {
+                        Log.e("HomeViewModel", "❌ 无法获取起点位置")
+                        _orderState.value = OrderState.Error("无法获取起点位置，请确保已开启定位")
+                        _isCreatingOrder.value = false
+                        return@launch
+                    }
+                    
+                    Log.d("HomeViewModel", "📍 起点坐标：lat=$startLat, lng=$startLng")
+                    Log.d("HomeViewModel", "📍 终点坐标：lat=$destLat, lng=$destLng")
+                    
+                    // ⭐ 检查起点和终点是否相同（误差 < 10米）
+                    val distance = calculateDistance(startLat, startLng, destLat, destLng)
+                    if (distance < 10.0) {
+                        Log.w("HomeViewModel", "⚠️ 起点和终点距离过近！距离=${distance}米，这会导致路线长度为0")
+                        Toast.makeText(
+                            appContext,
+                            "⚠️ 起点和终点距离过近（${String.format("%.0f", distance)}米），请重新选择目的地",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        _orderState.value = OrderState.Error("起点和终点不能相同或过于接近")
+                        _isCreatingOrder.value = false
+                        return@launch
+                    }
+                    
                     val request = com.example.myapplication.data.model.CreateOrderRequest(
                         poiName = finalDestName,      // ⭐ 使用 poiName（必填）
                         destLat = destLat,
                         destLng = destLng,
                         passengerCount = 1,
-                        remark = null
+                        remark = null,
+                        startLat = startLat,  // ⭐ 新增：起点纬度
+                        startLng = startLng   // ⭐ 新增：起点经度
                     )
                     
                     Log.d("HomeViewModel", "📤 发送创建订单请求：$request")
@@ -1318,7 +1385,10 @@
                         poiLat = destLat,
                         poiLng = destLng,
                         passengerCount = 1,
-                        remark = null
+                        remark = null,
+                        elderId = elderId,  // ⭐ 新增：传递长辈ID
+                        startLat = startLat,  // ⭐ 关键修复：传递起点纬度
+                        startLng = startLng   // ⭐ 关键修复：传递起点经度
                     )
                     
                     if (result.isSuccess()) {
@@ -1331,6 +1401,19 @@
                             _orderState.value = OrderState.Success(order)
                             // ⭐ 触发事件，通知 UI 跳转
                             _events.send(HomeEvent.OrderCreated(order))
+                            
+                            // ⭐ 关键修复：通过事件总线通知 ChatViewModel 更新 sharedLocation
+                            if (elderId != null) {
+                                viewModelScope.launch {
+                                    try {
+                                        // 发送全局事件，让 ChatViewModel 监听并更新
+                                        com.example.myapplication.MyApplication.sendOrderCreatedEvent(order.id, elderId)
+                                        Log.d("HomeViewModel", "✅ 已发送订单创建事件: orderId=${order.id}, elderId=$elderId")
+                                    } catch (e: Exception) {
+                                        Log.e("HomeViewModel", "❌ 发送订单创建事件失败", e)
+                                    }
+                                }
+                            }
                             
                             // ⭐ 修复：延迟发送导航事件，确保 orderState 已被 UI 层收集
                             viewModelScope.launch {
@@ -1865,8 +1948,8 @@
                     // ⭐ 关键修复：按照后端API文档构造请求
                     val request = com.example.myapplication.data.model.CreateOrderForElderRequest(
                         elderId = elderUserId,              // ⭐ 必填：长辈的用户ID
-                        startLat = startLat ?: currentLocation.value?.latitude,  // ⭐ 起点纬度（可选）
-                        startLng = startLng ?: currentLocation.value?.longitude, // ⭐ 起点经度（可选）
+                        startLat = startLat ?: _startLocation.value?.latitude ?: currentLocation.value?.latitude,  // ⭐ 优先级：参数 > 收藏起点 > 当前位置
+                        startLng = startLng ?: _startLocation.value?.longitude ?: currentLocation.value?.longitude, // ⭐ 优先级：参数 > 收藏起点 > 当前位置
                         destLat = destLat,                  // 终点纬度
                         destLng = destLng,                  // 终点经度
                         destAddress = poiName.trim(),       // ⭐ 必填：目的地名称（不能为null或空字符串）
@@ -1894,12 +1977,16 @@
                                     _orderState.value = OrderState.Success(responseData)
                                     _events.send(HomeEvent.OrderCreated(responseData))
                                     
-                                    // ⭐ 修复：普通用户代叫车后不跳转，等待长辈确认结果
-                                    // 不再发送 NavigateToOrderTracking 事件
+                                    // ⭐ 修复：普通用户代叫车后也跳转到行程追踪，显示“等待长辈确认”状态
+                                    launch {
+                                        kotlinx.coroutines.delay(500)  // 延迟 500ms，让 UI 动画完成
+                                        _events.send(HomeEvent.NavigateToOrderTracking(responseData.id))
+                                        Log.d("HomeViewModel", "🚀 已发送导航事件（亲友代叫车-Order类型）: orderId=${responseData.id}")
+                                    }
                                     
-                                    // ⭐ 新增：发送全局事件，通知长辈端显示确认框
-                                    viewModelScope.launch {
-                                        val requesterName = _userNickname.value ?: "亲友"
+                                    // ⭐ 修复：直接发送全局事件，不使用嵌套协程
+                                    val requesterName = _userNickname.value ?: "亲友"
+                                    launch {
                                         MyApplication.sendProxyOrderRequest(
                                             orderId = responseData.id,
                                             requesterName = requesterName,
@@ -1949,12 +2036,16 @@
                                         _orderState.value = OrderState.Success(tempOrder)
                                         _events.send(HomeEvent.OrderCreated(tempOrder))
                                         
-                                        // ⭐ 修复：普通用户代叫车后不跳转，等待长辈确认结果
-                                        // 不再发送 NavigateToOrderTracking 事件
+                                        // ⭐ 修复：普通用户代叫车后也跳转到行程追踪，显示“等待长辈确认”状态
+                                        launch {
+                                            kotlinx.coroutines.delay(500)  // 延迟 500ms，让 UI 动画完成
+                                            _events.send(HomeEvent.NavigateToOrderTracking(tempOrder.id))
+                                            Log.d("HomeViewModel", "🚀 已发送导航事件（亲友代叫车-Map类型）: orderId=${tempOrder.id}")
+                                        }
                                         
-                                        // ⭐ 新增：发送全局事件，通知长辈端显示确认框
-                                        viewModelScope.launch {
-                                            val requesterName = _userNickname.value ?: "亲友"
+                                        // ⭐ 修复：直接发送全局事件，不使用嵌套协程
+                                        val requesterName = _userNickname.value ?: "亲友"
+                                        launch {
                                             MyApplication.sendProxyOrderRequest(
                                                 orderId = tempOrder.id,
                                                 requesterName = requesterName,
@@ -2027,13 +2118,21 @@
                     }
                     
                     Log.d("HomeViewModel", "📱 长辈确认代叫车：orderId=$orderId, confirmed=$confirmed")
+                    Log.d("HomeViewModel", "🔍 [调试] 传入的 orderId 参数值: $orderId")
+                    
+                    if (orderId == 0L) {
+                        Log.e("HomeViewModel", "❌❌❌ 严重错误：orderId 为 0！这将导致后端无法处理")
+                        Log.e("HomeViewModel", "❌❌❌ 请检查调用方传递的参数是否正确")
+                    }
                     
                     val request = com.example.myapplication.data.model.ConfirmProxyOrderRequest(
                         confirmed = confirmed,
                         rejectReason = rejectReason
                     )
                     
+                    Log.d("HomeViewModel", "📤 准备调用 API：userId=$userId, orderId=$orderId")
                     val response = apiService.confirmProxyOrder(userId, orderId, request)
+                    Log.d("HomeViewModel", "📥 API 调用完成，response.code=${response.code}")
                     
                     if (response.isSuccess()) {
                         Log.d("HomeViewModel", "✅ 确认成功：${response.message}")
@@ -2174,9 +2273,6 @@
         private fun parseGuardPushMessage(json: String) {
             viewModelScope.launch {
                 try {
-                    Log.d("HomeViewModel", "📩 [HomeViewModel] === 开始解析 WebSocket 消息 ===")
-                    Log.d("HomeViewModel", "📩 [HomeViewModel] 收到原始JSON: $json")
-                    
                     val jsonFormat = kotlinx.serialization.json.Json {
                         ignoreUnknownKeys = true
                         isLenient = true
@@ -2428,7 +2524,6 @@
                                 try {
                                     Log.d("HomeViewModel", "🔄 HomeViewModel 开始监听 WebSocket 消息流...")
                                     webSocketClient.messages.collect { serverMessage ->
-                                        Log.d("HomeViewModel", "📥 [WS监听] HomeViewModel 收到消息: ${serverMessage.take(150)}...")
                                         parseGuardPushMessage(serverMessage)
                                     }
                                 } catch (e: Exception) {

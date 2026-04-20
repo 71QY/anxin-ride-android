@@ -139,6 +139,35 @@ class ChatViewModel @Inject constructor(
     // ⭐ 新增：是否为长辈模式（用于禁用下单功能）
     private val _isElderMode = MutableStateFlow(false)
     val isElderMode: StateFlow<Boolean> = _isElderMode.asStateFlow()
+    
+    /**
+     * ⭐ 新增：根据长辈模式生成友好的提示文本
+     */
+    private fun getFriendlyMessage(normalMsg: String, elderMsg: String): String {
+        return if (_isElderMode.value) elderMsg else normalMsg
+    }
+    
+    // ⭐ 新增：分享的地点信息（用于私聊界面显示）
+    data class SharedLocationInfo(
+        val elderId: Long,
+        val elderName: String,
+        val favoriteName: String,
+        val favoriteAddress: String,
+        val latitude: Double,              // 收藏地点纬度（目的地）
+        val longitude: Double,             // 收藏地点经度（目的地）
+        val timestamp: Long = System.currentTimeMillis(),
+        
+        // ⭐ 新增：长辈实时位置（作为代叫车起点）
+        val elderCurrentLat: Double? = null,   // 长辈当前纬度
+        val elderCurrentLng: Double? = null,   // 长辈当前经度
+        val elderLocationTimestamp: Long? = null,  // 位置更新时间戳
+        
+        // ⭐ 新增：订单状态（用于卡片显示）
+        val orderId: Long? = null,  // 关联的订单ID
+        val orderStatus: Int? = null  // 订单状态：0-待确认 1-已同意 2-行程中 3-已结束
+    )
+    private val _sharedLocation = MutableStateFlow<SharedLocationInfo?>(null)
+    val sharedLocation: StateFlow<SharedLocationInfo?> = _sharedLocation.asStateFlow()
 
     init {
         Log.d("ChatViewModel", "=== ChatViewModel 初始化开始 ===")
@@ -182,14 +211,35 @@ class ChatViewModel @Inject constructor(
         // ⭐ 优化：立即启动消息监听，不等待连接完成
         viewModelScope.launch {
             try {
-                Log.d("ChatViewModel", "🔄 开始监听 WebSocket 消息流...")
                 webSocketClient.messages.collect { serverMessage ->
-                    Log.d("ChatViewModel", "📥 ViewModel 收到消息: ${serverMessage.take(100)}...")
                     parseServerMessage(serverMessage)
                 }
             } catch (e: Exception) {
                 Log.e("ChatViewModel", "❌ 消息监听异常", e)
                 addSystemMessage("⚠️ 消息接收异常：${e.message}")
+            }
+        }
+        
+        // ⭐ 新增：监听订单创建事件，更新 sharedLocation 中的 orderId
+        viewModelScope.launch {
+            try {
+                com.example.myapplication.MyApplication.orderCreatedEvent.collect { event ->
+                    Log.d("ChatViewModel", "📩 收到订单创建事件：orderId=${event.orderId}, elderId=${event.elderId}")
+                    
+                    val currentSharedLocation = _sharedLocation.value
+                    if (currentSharedLocation != null && currentSharedLocation.elderId == event.elderId) {
+                        val updatedLocation = currentSharedLocation.copy(
+                            orderId = event.orderId,
+                            orderStatus = 0  // 0-待确认
+                        )
+                        _sharedLocation.value = updatedLocation
+                        Log.d("ChatViewModel", "✅ 已更新 sharedLocation 的 orderId: ${event.orderId}")
+                    } else {
+                        Log.w("ChatViewModel", "⚠️ 未找到匹配的 sharedLocation，elderId=${event.elderId}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("ChatViewModel", "❌ 订单创建事件监听异常", e)
             }
         }
 
@@ -203,6 +253,54 @@ class ChatViewModel @Inject constructor(
         }
 
         Log.d("ChatViewModel", "=== ChatViewModel 初始化完成 ===")
+        
+        // ⭐ 新增：从 SharedPreferences 恢复 sharedLocation（长辈端必备）
+        viewModelScope.launch {
+            try {
+                val userId = tokenManager.getUserId()
+                if (userId != null && _isElderMode.value) {
+                    Log.d("ChatViewModel", "🔄 [初始化] 尝试从本地缓存恢复 sharedLocation...")
+                    val prefs = MyApplication.instance.getSharedPreferences("shared_location_cache", android.content.Context.MODE_PRIVATE)
+                    val cachedElderId = prefs.getLong("elderId_${userId}", -1L)
+                    
+                    if (cachedElderId == userId) {
+                        val elderName = prefs.getString("elderName_${userId}", "") ?: ""
+                        val favoriteName = prefs.getString("favoriteName_${userId}", "") ?: ""
+                        val favoriteAddress = prefs.getString("favoriteAddress_${userId}", "") ?: ""
+                        val latitude = prefs.getFloat("latitude_${userId}", 0f).toDouble()
+                        val longitude = prefs.getFloat("longitude_${userId}", 0f).toDouble()
+                        val elderCurrentLat = prefs.getFloat("elderCurrentLat_${userId}", 0f).toDouble().takeIf { it != 0.0 }
+                        val elderCurrentLng = prefs.getFloat("elderCurrentLng_${userId}", 0f).toDouble().takeIf { it != 0.0 }
+                        val elderLocationTimestamp = prefs.getLong("elderLocationTimestamp_${userId}", 0L).takeIf { it != 0L }
+                        val orderId = prefs.getLong("orderId_${userId}", -1L).takeIf { it != -1L }
+                        
+                        if (favoriteName.isNotBlank()) {
+                            val restoredLocation = SharedLocationInfo(
+                                elderId = cachedElderId,
+                                elderName = elderName.ifBlank { "亲友" },
+                                favoriteName = favoriteName,
+                                favoriteAddress = favoriteAddress,
+                                latitude = latitude,
+                                longitude = longitude,
+                                elderCurrentLat = elderCurrentLat,
+                                elderCurrentLng = elderCurrentLng,
+                                elderLocationTimestamp = elderLocationTimestamp,
+                                orderId = orderId,
+                                orderStatus = 0  // 默认待确认
+                            )
+                            _sharedLocation.value = restoredLocation
+                            Log.d("ChatViewModel", "✅ [初始化] 成功恢复 sharedLocation: favoriteName=$favoriteName, orderId=$orderId")
+                        } else {
+                            Log.d("ChatViewModel", "⚠️ [初始化] 本地缓存为空")
+                        }
+                    } else {
+                        Log.d("ChatViewModel", "⚠️ [初始化] 没有该用户的分享记录 (userId=$userId)")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("ChatViewModel", "❌ [初始化] 恢复 sharedLocation 失败", e)
+            }
+        }
     }
 
     // ⭐ 定时检查 WebSocket 连接状态
@@ -404,17 +502,17 @@ class ChatViewModel @Inject constructor(
             if (orderKeywords.any { content.contains(it) }) {
                 Log.d("ChatViewModel", "👴 长辈端检测到下单意图，拦截并提示")
                 addSystemMessage(
-                    "⚠️ 温馨提示：\n" +
-                    "长辈端暂不支持直接下单叫车功能。\n" +
+                    "😊 温馨提示：\n" +
+                    "长辈端不能直接叫车哦~\n" +
                     "\n" +
-                    "如需叫车，请：\n" +
-                    "1. 联系您的亲友代劳\n" +
-                    "2. 使用普通端账号操作\n" +
+                    "如需叫车，您可以：\n" +
+                    "1. 联系您的亲友帮忙代叫\n" +
+                    "2. 让亲友使用他们的账号为您叫车\n" +
                     "\n" +
-                    "💡 您可以继续使用其他功能：\n" +
+                    "💡 我还可以帮您：\n" +
                     "• 查询地点信息\n" +
-                    "• 图片识别\n" +
-                    "• 路线咨询"
+                    "• 识别图片中的地址\n" +
+                    "• 提供路线建议"
                 )
                 return  // ⭐ 拦截，不发送到后端
             }
@@ -485,7 +583,11 @@ class ChatViewModel @Inject constructor(
                 if (webSocketClient.isConnected()) {
                     webSocketClient.sendRaw(json)
                 } else {
-                    addSystemMessage("❌ 网络连接已断开，请检查网络")
+                    val msg = getFriendlyMessage(
+                        "❌ 网络连接已断开，请检查网络",
+                        "😊 网络有点不稳定，请稍等一会儿再试哦~"
+                    )
+                    addSystemMessage(msg)
                 }
             }
         }
@@ -1665,12 +1767,10 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun parseServerMessage(json: String) {
-        Log.d("ChatViewModel", "📥 收到原始消息: ${json.take(200)}...")  // ⭐ 新增：记录原始消息
-        
         try {
             // ⭐ 新增：消息去重，避免重复显示相同的消息
             if (processedMessages.contains(json)) {
-                Log.d("ChatViewModel", "⚠️ 检测到重复消息，已跳过")
+                // Log.d("ChatViewModel", "⚠️ 检测到重复消息，已跳过")  // ⭐ 移除：减少日志噪音
                 return
             }
             processedMessages.add(json)
@@ -2003,7 +2103,10 @@ class ChatViewModel @Inject constructor(
                 // ⭐ 修复：直接检测亲情守护推送类型（后端可能直接发送 FAVORITE_SHARED/NEW_ORDER 等）
                 response.type?.uppercase() == "FAVORITE_SHARED" ||
                 response.type?.uppercase() == "NEW_ORDER" ||
-                response.type?.uppercase() == "CHAT_MESSAGE" -> {
+                response.type?.uppercase() == "ORDER_CREATED" ||
+                response.type?.uppercase() == "CHAT_MESSAGE" ||
+                response.type?.uppercase() == "ORDER_ACCEPTED" ||
+                response.type?.uppercase() == "PROXY_ORDER_CONFIRMED" -> {
                     Log.d("ChatViewModel", "📩 收到亲情守护推送（直接类型）：${response.type}")
                     Log.d("ChatViewModel", "原始JSON: $json")
                     handleGuardPushMessage(json)
@@ -2546,23 +2649,245 @@ class ChatViewModel @Inject constructor(
                     isLenient = true
                 }
                 
-                val pushMessage = jsonFormat.decodeFromString<GuardPushMessage>(json)
+                // ⭐ 关键修复：先解析外层结构，提取 data 字段
+                val outerJson = jsonFormat.parseToJsonElement(json) as? kotlinx.serialization.json.JsonObject
+                if (outerJson == null) {
+                    Log.e("ChatViewModel", "❌ JSON 解析失败：不是 JsonObject 类型")
+                    return@launch
+                }
                 
-                Log.d("ChatViewModel", "📩 收到亲情守护推送：type=${pushMessage.type}")
+                val type = outerJson["type"]?.let { 
+                    if (it is kotlinx.serialization.json.JsonPrimitive) it.content else "" 
+                } ?: ""
+                val dataElement = outerJson["data"]
+                
+                Log.d("ChatViewModel", "📩 收到亲情守护推送：type=$type")
+                Log.d("ChatViewModel", "🔍 [调试] data元素存在: ${dataElement != null}")
+                
+                // ⭐ 如果有 data 字段，需要将 data 中的字段合并到顶层
+                val pushMessage = if (dataElement != null && dataElement is kotlinx.serialization.json.JsonObject) {
+                    // 将 data 对象和 type 合并为一个新的 JsonObject
+                    val mutableMap = dataElement.toMutableMap()
+                    mutableMap["type"] = kotlinx.serialization.json.JsonPrimitive(type)
+                    
+                    // 添加其他顶层字段（如果有的话）
+                    outerJson["message"]?.let { msg -> mutableMap["message"] = msg }
+                    outerJson["success"]?.let { success -> mutableMap["success"] = success }
+                    
+                    val mergedJson = kotlinx.serialization.json.JsonObject(mutableMap).toString()
+                    Log.d("ChatViewModel", "🔍 [调试] 合并后的JSON前100字符: ${mergedJson.take(100)}...")
+                    
+                    // 解析合并后的 JSON
+                    jsonFormat.decodeFromString<GuardPushMessage>(mergedJson)
+                } else {
+                    // 没有 data 字段，直接解析（兼容旧格式）
+                    Log.d("ChatViewModel", "🔍 [调试] 没有 data 字段，直接解析")
+                    jsonFormat.decodeFromString<GuardPushMessage>(json)
+                }
+                
+                Log.d("ChatViewModel", "📩 解析结果：orderId=${pushMessage.orderId}, requester=${pushMessage.proxyUserName}, dest=${pushMessage.destAddress}")
                 
                 when (pushMessage.type) {
-                    "NEW_ORDER" -> {
+                    "NEW_ORDER", "ORDER_CREATED" -> {  // ⭐ 修复：兼容两种消息类型
                         // ⭐ 代叫车请求通知
                         Log.d("ChatViewModel", "🚗 收到代叫车请求：orderId=${pushMessage.orderId}, requester=${pushMessage.proxyUserName}, dest=${pushMessage.destAddress}")
                         
-                        // 触发全局事件，让 HomeViewModel 接收
-                        MyApplication.sendProxyOrderRequest(
-                            orderId = pushMessage.orderId ?: 0L,
-                            requesterName = pushMessage.proxyUserName ?: "亲友",
-                            destination = pushMessage.destAddress ?: "未知目的地"
-                        )
+                        // ⭐ 关键修复：更新 sharedLocation 中的 orderId
+                        val currentSharedLocation = _sharedLocation.value
+                        if (currentSharedLocation != null && pushMessage.orderId != null) {
+                            val updatedLocation = currentSharedLocation.copy(
+                                orderId = pushMessage.orderId
+                            )
+                            _sharedLocation.value = updatedLocation
+                            Log.d("ChatViewModel", "✅ 已更新 sharedLocation 的 orderId: ${pushMessage.orderId}")
+                            
+                            // ⭐ 同时持久化保存 orderId 到 SharedPreferences
+                            try {
+                                viewModelScope.launch {
+                                    val appInstance = MyApplication.instance
+                                    val prefs = appInstance.getSharedPreferences("shared_location_cache", android.content.Context.MODE_PRIVATE)
+                                    prefs.edit()
+                                        .putLong("orderId_${currentSharedLocation.elderId}", pushMessage.orderId)
+                                        .apply()
+                                    Log.d("ChatViewModel", "💾 [持久化] 已保存 orderId 到本地缓存")
+                                }
+                            } catch (e: Exception) {
+                                Log.e("ChatViewModel", "❌ [持久化] 保存 orderId 失败", e)
+                            }
+                        } else {
+                            Log.w("ChatViewModel", "⚠️ 无法更新 orderId: sharedLocation=$currentSharedLocation, orderId=${pushMessage.orderId}")
+                        }
                         
-                        Log.d("ChatViewModel", "✅ 已发送全局代叫车请求事件")
+                        // ⭐ 修复：在协程中发送全局事件
+                        viewModelScope.launch {
+                            MyApplication.sendProxyOrderRequest(
+                                orderId = pushMessage.orderId ?: 0L,
+                                requesterName = pushMessage.proxyUserName ?: "亲友",
+                                destination = pushMessage.destAddress ?: "未知目的地"
+                            )
+                            Log.d("ChatViewModel", "✅ 已发送全局代叫车请求事件")
+                        }
+                        
+                        // ⭐ 新增：如果是长辈端，也需要更新 sharedLocation（用于卡片显示）
+                        if (_isElderMode.value) {
+                            Log.d("ChatViewModel", "👴 长辈端收到 NEW_ORDER，更新 sharedLocation")
+                            
+                            // ⭐ 关键修复：从 pushMessage.userId 获取长辈ID（后端返回的字段）
+                            val elderId = pushMessage.userId ?: com.example.myapplication.MyApplication.tokenManager.getUserId() ?: 0L
+                            
+                            // ⭐ 关键修复：创建 SharedLocationInfo 并更新 StateFlow
+                            val sharedInfo = SharedLocationInfo(
+                                elderId = elderId,
+                                elderName = pushMessage.proxyUserName ?: "亲友",
+                                favoriteName = pushMessage.poiName ?: pushMessage.destAddress ?: "未知目的地",
+                                favoriteAddress = pushMessage.destAddress ?: "",
+                                latitude = pushMessage.destLat ?: 0.0,
+                                longitude = pushMessage.destLng ?: 0.0,
+                                elderCurrentLat = pushMessage.startLat,  // ⭐ 长辈当前位置作为起点
+                                elderCurrentLng = pushMessage.startLng,
+                                elderLocationTimestamp = System.currentTimeMillis(),
+                                orderId = pushMessage.orderId,  // ⭐ 保存订单 ID
+                                orderStatus = 0  // 0-待确认
+                            )
+                            _sharedLocation.value = sharedInfo
+                            
+                            Log.d("ChatViewModel", "✅ [长辈端] sharedLocation 已更新：orderId=${pushMessage.orderId}")
+                            Log.d("ChatViewModel", "✅ [长辈端] 目的地：${sharedInfo.favoriteName}")
+                            Log.d("ChatViewModel", "✅ [长辈端] 起点：lat=${sharedInfo.elderCurrentLat}, lng=${sharedInfo.elderCurrentLng}")
+                            
+                            // ⭐ 关键修复：发送 orderCreatedEvent，确保其他组件也能收到通知
+                            viewModelScope.launch {
+                                val elderId = sharedInfo.elderId
+                                val orderId = pushMessage.orderId ?: 0L
+                                MyApplication.sendOrderCreatedEvent(orderId, elderId)
+                                Log.d("ChatViewModel", "📤 [长辈端] 已发送 orderCreatedEvent: orderId=$orderId, elderId=$elderId")
+                            }
+                            
+                            // ⭐ 持久化保存
+                            viewModelScope.launch {
+                                try {
+                                    Log.d("ChatViewModel", "💾 [长辈端] 开始持久化保存...")
+                                    val prefs = MyApplication.instance.getSharedPreferences("shared_location_cache", android.content.Context.MODE_PRIVATE)
+                                    
+                                    prefs.edit()
+                                        .putLong("elderId_${sharedInfo.elderId}", sharedInfo.elderId)
+                                        .putString("elderName_${sharedInfo.elderId}", sharedInfo.elderName)
+                                        .putString("favoriteName_${sharedInfo.elderId}", sharedInfo.favoriteName)
+                                        .putString("favoriteAddress_${sharedInfo.elderId}", sharedInfo.favoriteAddress)
+                                        .putFloat("latitude_${sharedInfo.elderId}", sharedInfo.latitude.toFloat())
+                                        .putFloat("longitude_${sharedInfo.elderId}", sharedInfo.longitude.toFloat())
+                                        .apply()
+                                    
+                                    Log.d("ChatViewModel", "💾 [长辈端] 基本信息保存成功")
+                                    
+                                    if (sharedInfo.elderCurrentLat != null && sharedInfo.elderCurrentLng != null) {
+                                        prefs.edit()
+                                            .putFloat("elderCurrentLat_${sharedInfo.elderId}", sharedInfo.elderCurrentLat.toFloat())
+                                            .putFloat("elderCurrentLng_${sharedInfo.elderId}", sharedInfo.elderCurrentLng.toFloat())
+                                            .putLong("elderLocationTimestamp_${sharedInfo.elderId}", sharedInfo.elderLocationTimestamp ?: 0L)
+                                            .putLong("orderId_${sharedInfo.elderId}", sharedInfo.orderId ?: 0L)
+                                            .apply()
+                                        Log.d("ChatViewModel", "💾 [长辈端] 长辈位置和 orderId 保存成功")
+                                    }
+                                    
+                                    // ⭐ 验证保存结果
+                                    val verifyPrefs = MyApplication.instance.getSharedPreferences("shared_location_cache", android.content.Context.MODE_PRIVATE)
+                                    val allKeys = verifyPrefs.all.keys
+                                    Log.d("ChatViewModel", "💾 [长辈端] 验证：SharedPreferences 中共有 ${allKeys.size} 个键")
+                                    Log.d("ChatViewModel", "💾 [长辈端] 验证：所有键 = $allKeys")
+                                    
+                                    Log.d("ChatViewModel", "✅ [长辈端] 已持久化保存 sharedLocation")
+                                } catch (e: Exception) {
+                                    Log.e("ChatViewModel", "❌ [长辈端] 持久化失败", e)
+                                }
+                            }
+                        }
+                    }
+                    
+                    "ORDER_ACCEPTED", "PROXY_ORDER_CONFIRMED" -> {
+                        // ⭐ 新增：长辈同意代叫车请求
+                        val orderId = pushMessage.orderId
+                        Log.d("ChatViewModel", "✅ 收到订单确认消息：type=${pushMessage.type}, orderId=$orderId")
+                        
+                        // ⭐ 关键修复：如果是长辈端，需要创建 sharedLocation 并持久化
+                        if (_isElderMode.value && orderId != null) {
+                            Log.d("ChatViewModel", "👴 [长辈端] 收到 PROXY_ORDER_CONFIRMED，创建 sharedLocation")
+                            
+                            // 尝试从之前的 NEW_ORDER 消息中获取目的地信息
+                            val currentSharedLocation = _sharedLocation.value
+                            
+                            if (currentSharedLocation != null && currentSharedLocation.orderId == orderId) {
+                                // 已有 sharedLocation，只更新状态
+                                val updatedLocation = currentSharedLocation.copy(
+                                    orderStatus = 1  // 1-已同意
+                                )
+                                _sharedLocation.value = updatedLocation
+                                Log.d("ChatViewModel", "✅ 已更新订单状态为：已同意")
+                            } else {
+                                // 没有 sharedLocation，创建一个基本的（用于显示卡片）
+                                Log.w("ChatViewModel", "⚠️ 未找到 sharedLocation，创建基本记录")
+                                
+                                // ⭐ 关键修复：从 pushMessage.userId 获取长辈ID
+                                val elderId = pushMessage.userId ?: com.example.myapplication.MyApplication.tokenManager.getUserId() ?: 0L
+                                val elderName = "我"
+                                
+                                val sharedInfo = SharedLocationInfo(
+                                    elderId = elderId,
+                                    elderName = elderName,
+                                    favoriteName = "代叫车行程",  // 默认名称
+                                    favoriteAddress = "",
+                                    latitude = 0.0,
+                                    longitude = 0.0,
+                                    elderCurrentLat = null,
+                                    elderCurrentLng = null,
+                                    elderLocationTimestamp = null,
+                                    orderId = orderId,
+                                    orderStatus = 1  // 已同意
+                                )
+                                _sharedLocation.value = sharedInfo
+                                Log.d("ChatViewModel", "✅ [长辈端] 已创建 sharedLocation: orderId=$orderId")
+                                
+                                // ⭐ 持久化保存
+                                viewModelScope.launch {
+                                    try {
+                                        val prefs = MyApplication.instance.getSharedPreferences("shared_location_cache", android.content.Context.MODE_PRIVATE)
+                                        prefs.edit()
+                                            .putLong("elderId_${elderId}", elderId)
+                                            .putString("elderName_${elderId}", elderName)
+                                            .putString("favoriteName_${elderId}", "代叫车行程")
+                                            .putLong("orderId_${elderId}", orderId)
+                                            .apply()
+                                        Log.d("ChatViewModel", "💾 [长辈端] 已持久化保存 sharedLocation")
+                                    } catch (e: Exception) {
+                                        Log.e("ChatViewModel", "❌ [长辈端] 持久化失败", e)
+                                    }
+                                }
+                            }
+                        } else {
+                            // 亲友端：只更新状态
+                            val currentSharedLocation = _sharedLocation.value
+                            if (currentSharedLocation != null && currentSharedLocation.orderId == orderId) {
+                                val updatedLocation = currentSharedLocation.copy(
+                                    orderStatus = 1  // 1-已同意
+                                )
+                                _sharedLocation.value = updatedLocation
+                                Log.d("ChatViewModel", "✅ 已更新订单状态为：已同意")
+                            } else {
+                                Log.w("ChatViewModel", "⚠️ 未找到对应的 sharedLocation，orderId=$orderId")
+                            }
+                        }
+                        
+                        // ⭐ 关键修复：亲友端收到确认后，跳转到行程追踪界面
+                        if (!_isElderMode.value && orderId != null) {
+                            Log.d("ChatViewModel", "🚀 [亲友端] 长辈已确认，准备跳转到行程追踪: orderId=$orderId")
+                            viewModelScope.launch {
+                                kotlinx.coroutines.delay(500)  // 延迟 500ms，让 UI 动画完成
+                                MyApplication.sendNavigateToOrderTracking(orderId)
+                                Log.d("ChatViewModel", "🚀 [亲友端] 已发送导航事件: orderId=$orderId")
+                            }
+                        } else {
+                            Log.d("ChatViewModel", "⏭️ [长辈端] 忽略 PROXY_ORDER_CONFIRMED（长辈不需要跳转）")
+                        }
                     }
                     
                     "CHAT_MESSAGE" -> {
@@ -2577,16 +2902,91 @@ class ChatViewModel @Inject constructor(
                         // ⭐ 新增：处理长辈分享的收藏地点
                         Log.d("ChatViewModel", "📍 收到长辈分享的收藏地点：${pushMessage.favoriteName}")
                         
-                        val elderId = pushMessage.senderId
+                        // ⭐ 关键修复：优先使用 userId，兼容后端字段名
+                        val elderId = pushMessage.userId ?: pushMessage.elderUserId ?: pushMessage.senderId ?: 0L
                         val elderName = pushMessage.proxyUserName ?: "长辈"
                         val favoriteName = pushMessage.favoriteName ?: "未知地点"
                         val favoriteAddress = pushMessage.favoriteAddress ?: ""
                         val favoriteLat = pushMessage.favoriteLatitude ?: 0.0
                         val favoriteLng = pushMessage.favoriteLongitude ?: 0.0
                         
-                        // ⭐ 发送通知提醒普通用户
+                        // ⭐ 新增：获取长辈实时位置（作为代叫车起点）
+                        val elderCurrentLat = pushMessage.elderCurrentLat
+                        val elderCurrentLng = pushMessage.elderCurrentLng
+                        val elderLocationTimestamp = pushMessage.elderLocationTimestamp
+                        
+                        if (elderCurrentLat != null && elderCurrentLng != null) {
+                            Log.d("ChatViewModel", "✅ 收到长辈实时位置：lat=$elderCurrentLat, lng=$elderCurrentLng")
+                            Log.d("ChatViewModel", "⏰ 位置时间戳：$elderLocationTimestamp")
+                        } else {
+                            Log.w("ChatViewModel", "⚠️ 未收到长辈实时位置，将使用默认起点")
+                        }
+                        
+                        // ⭐ 更新 StateFlow，让 PrivateChatScreen 可以实时接收
+                        val sharedInfo = SharedLocationInfo(
+                            elderId = elderId,
+                            elderName = elderName,
+                            favoriteName = favoriteName,
+                            favoriteAddress = favoriteAddress,
+                            latitude = favoriteLat,
+                            longitude = favoriteLng,
+                            elderCurrentLat = elderCurrentLat,
+                            elderCurrentLng = elderCurrentLng,
+                            elderLocationTimestamp = elderLocationTimestamp,
+                            orderId = null,  // 初始状态没有订单ID
+                            orderStatus = 0  // 0-待确认
+                        )
+                        _sharedLocation.value = sharedInfo
+                        
+                        Log.d("ChatViewModel", "✅ sharedLocation StateFlow 已更新：$favoriteName")
+                        Log.d("ChatViewModel", "🔔 [卡片状态] sharedLocation.value != null: ${_sharedLocation.value != null}")
+                        Log.d("ChatViewModel", "🔔 [卡片数据] elderId=$elderId, elderName=$elderName, favoriteName=$favoriteName")
+                        Log.d("ChatViewModel", "🔔 [卡片数据] lat=$favoriteLat, lng=$favoriteLng, elderCurrentLat=$elderCurrentLat, elderCurrentLng=$elderCurrentLng")
+                        
+                        // ⭐ 关键修复：持久化保存到 SharedPreferences，确保进入私聊界面时能恢复
+                        try {
+                            viewModelScope.launch {
+                                try {
+                                    Log.d("ChatViewModel", "💾 [持久化] 开始保存分享地点...")
+                                    val appInstance = MyApplication.instance
+                                    Log.d("ChatViewModel", "💾 [持久化] MyApplication.instance 获取成功")
+                                    
+                                    val prefs = appInstance.getSharedPreferences("shared_location_cache", android.content.Context.MODE_PRIVATE)
+                                    Log.d("ChatViewModel", "💾 [持久化] SharedPreferences 获取成功")
+                                    
+                                    prefs.edit()
+                                        .putLong("elderId_${elderId}", elderId)
+                                        .putString("elderName_${elderId}", elderName)
+                                        .putString("favoriteName_${elderId}", favoriteName)
+                                        .putString("favoriteAddress_${elderId}", favoriteAddress)
+                                        .putFloat("latitude_${elderId}", favoriteLat.toFloat())
+                                        .putFloat("longitude_${elderId}", favoriteLng.toFloat())
+                                        .apply()
+                                    Log.d("ChatViewModel", "💾 [持久化] 基本信息保存成功")
+                                    
+                                    if (elderCurrentLat != null && elderCurrentLng != null) {
+                                        prefs.edit()
+                                            .putFloat("elderCurrentLat_${elderId}", elderCurrentLat.toFloat())
+                                            .putFloat("elderCurrentLng_${elderId}", elderCurrentLng.toFloat())
+                                            .putLong("elderLocationTimestamp_${elderId}", elderLocationTimestamp ?: 0L)
+                                            .apply()
+                                        Log.d("ChatViewModel", "💾 [持久化] 长辈位置保存成功")
+                                    }
+                                    
+                                    Log.d("ChatViewModel", "✅ [持久化] 已保存分享地点到本地缓存：elderId=$elderId")
+                                } catch (e: Exception) {
+                                    Log.e("ChatViewModel", "❌ [持久化] 保存失败", e)
+                                    e.printStackTrace()
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("ChatViewModel", "❌ [持久化] 启动协程失败", e)
+                            e.printStackTrace()
+                        }
+                        
+                        // ⭐ 发送通知提醒普通用户（如果不在聊天界面）
                         sendFavoriteSharedNotification(
-                            elderId = elderId ?: 0L,
+                            elderId = elderId,
                             elderName = elderName,
                             favoriteName = favoriteName,
                             favoriteAddress = favoriteAddress,
@@ -2691,5 +3091,21 @@ class ChatViewModel @Inject constructor(
         } catch (e: Exception) {
             Log.e("ChatViewModel", "❌ 发送通知异常", e)
         }
+    }
+    
+    /**
+     * ⭐ 新增：清除 sharedLocation，避免重复弹窗
+     */
+    fun clearSharedLocation() {
+        _sharedLocation.value = null
+        Log.d("ChatViewModel", "✅ 已清除 sharedLocation")
+    }
+    
+    /**
+     * ⭐ 新增：设置 sharedLocation（用于从缓存恢复）
+     */
+    fun setSharedLocation(location: SharedLocationInfo) {
+        _sharedLocation.value = location
+        Log.d("ChatViewModel", "✅ 已设置 sharedLocation：${location.favoriteName}")
     }
 }

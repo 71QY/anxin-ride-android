@@ -1,5 +1,6 @@
 package com.example.myapplication.data.model
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 
@@ -58,8 +59,22 @@ data class GuardPushMessage(
     val orderId: Long? = null,                 // 订单ID
     val orderNo: String? = null,               // 订单号
     val destAddress: String? = null,           // 目的地地址
+    
+    // ⭐ 关键修复：添加 userId 字段（长辈端收到的 ORDER_CREATED 消息中包含此字段）
+    @SerialName("userId")
+    val userId: Long? = null,                  // 长辈用户ID（用于长辈端识别自己）
+    
+    // ⭐ 修复：兼容后端的 requesterName 字段
+    @SerialName("requesterName")
     val proxyUserName: String? = null,         // 代叫人姓名
+    
+    // ⭐ 修复：兼容后端的 elderUserId 字段
+    @SerialName("senderId")
     val senderId: Long? = null,                // 发送者ID（聊天消息）
+    
+    @SerialName("elderUserId")
+    val elderUserId: Long? = null,             // 长辈用户ID（分享收藏地点）
+    
     val senderType: Int? = null,               // 发送者类型：1-长辈 2-亲友 3-司机（聊天消息）
     val messageType: Int? = null,              // 消息类型：1-文字 2-语音 3-快捷短语（聊天消息）
     val content: String? = null,               // 消息内容（聊天消息）
@@ -69,10 +84,26 @@ data class GuardPushMessage(
     val favoriteId: Long? = null,              // 收藏ID
     val favoriteName: String? = null,          // 收藏地点名称
     val favoriteAddress: String? = null,       // 收藏地点地址
-    val favoriteLatitude: Double? = null,      // 纬度
-    val favoriteLongitude: Double? = null,     // 经度
+    
+    @SerialName("favoriteLat")
+    val favoriteLatitude: Double? = null,      // 纬度（目的地）
+    
+    @SerialName("favoriteLng")
+    val favoriteLongitude: Double? = null,     // 经度（目的地）
+    
     val favoritePhone: String? = null,         // 电话
-    val favoriteDescription: String? = null    // 描述
+    val favoriteDescription: String? = null,   // 描述
+    
+    // ⭐ 新增：长辈实时位置（作为代叫车起点）
+    val elderCurrentLat: Double? = null,       // 长辈当前纬度
+    val elderCurrentLng: Double? = null,       // 长辈当前经度
+    val elderLocationTimestamp: Long? = null,  // 位置更新时间戳
+    
+    // ⭐ 新增：NEW_ORDER 消息专用字段（用于长辈端卡片显示）
+    val poiName: String? = null,               // 目的地名称
+    val destLat: Double? = null,               // 目的地纬度
+    val destLng: Double? = null,               // 目的地经度
+    val startLat: Double? = null,              // 起点纬度（长辈位置）
+    val startLng: Double? = null,              // 起点经度（长辈位置）
+    val proxyUserId: Long? = null              // 代叫人ID
 )
-
-// ⭐ 已删除重复的 UserMessage 和 UserImage 类（它们有独立的文件）

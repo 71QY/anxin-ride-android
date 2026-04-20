@@ -85,18 +85,24 @@ class OrderListViewModel @Inject constructor(
                     emptyList()
                 }
                 
-                // 2. 加载代叫订单（仅普通账户，长辈账户跳过此步骤避免 403）
+                // 2. 加载代叫订单（仅普通账户，获取我为长辈叫的订单；长辈账户跳过此步骤）
                 val proxyOrders = if (!isElderMode) {
-                    val proxyResult = apiService.getProxyOrders(userId)
-                    if (proxyResult.isSuccess() && proxyResult.data != null) {
-                        Log.d("OrderListViewModel", "✅ 加载代叫订单成功，数量=${proxyResult.data!!.size}")
-                        proxyResult.data!!
-                    } else {
-                        Log.w("OrderListViewModel", "⚠️ 加载代叫订单失败：${proxyResult.message}")
+                    try {
+                        val proxyResult = apiService.getProxyOrders(userId)
+                        if (proxyResult.isSuccess() && proxyResult.data != null) {
+                            Log.d("OrderListViewModel", "✅ 加载代叫订单成功，数量=${proxyResult.data!!.size}")
+                            proxyResult.data!!
+                        } else {
+                            Log.w("OrderListViewModel", "⚠️ 加载代叫订单失败：${proxyResult.message} (code=${proxyResult.code})")
+                            emptyList()
+                        }
+                    } catch (e: Exception) {
+                        // ⭐ 修复：捕获网络异常（如 403 Forbidden），不中断整个流程
+                        Log.e("OrderListViewModel", "❌ 加载代叫订单异常：${e.message}", e)
                         emptyList()
                     }
                 } else {
-                    Log.d("OrderListViewModel", "⚠️ 长辈模式，跳过加载代叫订单")
+                    Log.d("OrderListViewModel", "⚠️ 长辈模式，跳过加载代叫订单（长辈的被代叫订单在普通订单列表中）")
                     emptyList()
                 }
                 

@@ -54,7 +54,6 @@ fun ProfileScreen(
     onNavigateToOrderList: () -> Unit = {},
     onNavigateToGuardian: () -> Unit = {},  // ⭐ 新增：跳转到亲情守护页面
     onNavigateToAccount: () -> Unit = {},   // ⭐ 新增：跳转到账号安全页面
-    onNavigateToTravelRecords: () -> Unit = {},  // ⭐ 新增：跳转到出行记录页面
     onLogout: () -> Unit = {}  // ⭐ 新增：退出登录回调
 ) {
     val profile by viewModel.profile.collectAsStateWithLifecycle()
@@ -603,17 +602,17 @@ fun ProfileScreen(
                                         // 旧后端地址 (A): cleanUrl.startsWith("/api/") -> "http://10.241.75.80:8080$cleanUrl"
                                         // 中间后端地址 (B): cleanUrl.startsWith("/api/") -> "http://192.168.189.57:8080$cleanUrl"
                                         // 新后端地址 (C):
-                                        cleanUrl.startsWith("/api/") -> "http://192.168.189.80:8080$cleanUrl"
+                                        cleanUrl.startsWith("/api/") -> "http://10.241.75.80:8080$cleanUrl"
                                         // 以 / 开头的其他路径
                                         // 旧后端地址 (A): cleanUrl.startsWith("/") -> "http://10.241.75.80:8080/api$cleanUrl"
                                         // 中间后端地址 (B): cleanUrl.startsWith("/") -> "http://192.168.189.57:8080/api$cleanUrl"
                                         // 新后端地址 (C):
-                                        cleanUrl.startsWith("/") -> "http://192.168.189.80:8080/api$cleanUrl"
+                                        cleanUrl.startsWith("/") -> "http://10.241.75.80:8080/api$cleanUrl"
                                         // 不带 / 的相对路径
                                         // 旧后端地址 (A): else -> "http://10.241.75.80:8080/api/$cleanUrl"
                                         // 中间后端地址 (B): else -> "http://192.168.189.57:8080/api/$cleanUrl"
                                         // 新后端地址 (C):
-                                        else -> "http://192.168.189.80:8080/api/$cleanUrl"
+                                        else -> "http://10.241.75.80:8080/api/$cleanUrl"
                                     }
                                 } else null
                                 
@@ -1055,69 +1054,6 @@ fun ProfileScreen(
                                     )
                                     Text(
                                         text = "管理密码、实名认证等",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            
-                            Icon(
-                                Icons.Default.ChevronRight,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-                
-                // ⭐ 出行记录(行程凭证)
-                item {
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp)
-                            .clickable { onNavigateToTravelRecords() },  // ⭐ 点击跳转到出行记录页面
-                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surface
-                        ),
-                        shape = MaterialTheme.shapes.medium
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Surface(
-                                    modifier = Modifier.size(40.dp),
-                                    shape = MaterialTheme.shapes.medium,
-                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            Icons.Default.DirectionsCar,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
-                                }
-                                
-                                Column {
-                                    Text(
-                                        text = "出行记录",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                    Text(
-                                        text = "查看长辈的出行历史",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )

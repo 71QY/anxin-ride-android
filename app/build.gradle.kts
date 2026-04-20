@@ -24,11 +24,11 @@ android {
         // 旧后端地址 (A): val apiBaseUrl = project.findProperty("api.baseUrl")?.toString() ?: "http://10.241.75.80:8080/api/"
         // 中间后端地址 (B): val apiBaseUrl = project.findProperty("api.baseUrl")?.toString() ?: "http://192.168.189.57:8080/api/"
         // 新后端地址 (C):
-        val apiBaseUrl = project.findProperty("api.baseUrl")?.toString() ?: "http://192.168.189.80:8080/api/"
+        val apiBaseUrl = project.findProperty("api.baseUrl")?.toString() ?: "http://10.241.75.80:8080/api/"
         // 旧后端地址 (A): val websocketUrl = project.findProperty("websocket.url")?.toString() ?: "ws://10.241.75.80:8080/ws/agent"
         // 中间后端地址 (B): val websocketUrl = project.findProperty("websocket.url")?.toString() ?: "ws://192.168.189.57:8080/ws/agent"
         // 新后端地址 (C):
-        val websocketUrl = project.findProperty("websocket.url")?.toString() ?: "ws://192.168.189.80:8080/ws/agent"
+        val websocketUrl = project.findProperty("websocket.url")?.toString() ?: "ws://10.241.75.80:8080/ws/agent"
         val amapKey = project.findProperty("amap.key")?.toString() ?: ""
         val iflytekAppid = project.findProperty("iflytek.appid")?.toString() ?: ""
         val baiduAppId = project.findProperty("baidu.app.id")?.toString() ?: ""
