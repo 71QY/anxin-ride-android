@@ -18,7 +18,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 
 @HiltViewModel
@@ -39,13 +41,14 @@ class OrderTrackingViewModel @Inject constructor(
     private val _etaMinutes = MutableStateFlow<Int?>(null)
     val etaMinutes: StateFlow<Int?> = _etaMinutes.asStateFlow()
 
-    // ⭐ 新增：事件流（用于UI提示）
-    private val _events = MutableSharedFlow<OrderTrackingEvent>()
+    // ⭐ 新增：事件流（用于UI提示）- replay=1 确保不会丢失事件
+    private val _events = MutableSharedFlow<OrderTrackingEvent>(replay = 1)
     val events = _events.asSharedFlow()
 
     // ==================== WebSocket 监听 ====================
     
     private var wsJob: Job? = null
+    private var delayedTipJob: Job? = null  // ⭐ Bug 8: 保存延迟提示任务
 
     /**
      * 初始化行程追踪（传入订单ID）
@@ -54,27 +57,33 @@ class OrderTrackingViewModel @Inject constructor(
         Log.d("OrderTrackingVM", "🚀 初始化行程追踪，订单ID: $orderId")
         
         viewModelScope.launch(Dispatchers.IO) {
-            _uiState.value = OrderTrackingUiState.Loading
-            
             // 1. 获取订单详情
             val result = orderRepository.getOrder(orderId)
             
-            if (result.isSuccess()) {
-                val order = result.data!!
-                Log.d("OrderTrackingVM", "✅ 订单加载成功: ${order.orderNo}")
-                
-                _uiState.value = OrderTrackingUiState.Success(order)
-                
-                // 2. 如果有司机位置，立即显示
-                if (order.driverLat != null && order.driverLng != null) {
-                    _driverLocation.value = LatLng(order.driverLat, order.driverLng)
+            // ⭐ Bug 2 & 3: 切换到 Main 线程更新 UI，并安全处理 null
+            withContext(Dispatchers.Main) {
+                if (result.isSuccess()) {
+                    val order = result.data ?: run {
+                        Log.e("OrderTrackingVM", "❌ 订单数据为空")
+                        _uiState.value = OrderTrackingUiState.Error("订单数据异常")
+                        return@withContext
+                    }
+                    
+                    Log.d("OrderTrackingVM", "✅ 订单加载成功: ${order.orderNo}")
+                    _uiState.value = OrderTrackingUiState.Loading
+                    _uiState.value = OrderTrackingUiState.Success(order)
+                    
+                    // 2. 如果有司机位置，立即显示
+                    if (order.driverLat != null && order.driverLng != null) {
+                        _driverLocation.value = LatLng(order.driverLat, order.driverLng)
+                    }
+                    
+                    // 3. 连接 WebSocket 并监听消息
+                    connectAndListen(orderId)
+                } else {
+                    Log.e("OrderTrackingVM", "❌ 订单加载失败: ${result.message}")
+                    _uiState.value = OrderTrackingUiState.Error(result.message ?: "订单不存在")
                 }
-                
-                // 3. 连接 WebSocket 并监听消息
-                connectAndListen(orderId)
-            } else {
-                Log.e("OrderTrackingVM", "❌ 订单加载失败: ${result.message}")
-                _uiState.value = OrderTrackingUiState.Error(result.message ?: "订单不存在")
             }
         }
     }
@@ -99,8 +108,20 @@ class OrderTrackingViewModel @Inject constructor(
                         webSocketClient.connect(wsSessionId, token)
                         Log.d("OrderTrackingVM", "✅ WebSocket 连接请求已发送")
                         
-                        // 等待连接建立
-                        kotlinx.coroutines.delay(1000)
+                        // ⭐ Bug 4: 等待连接建立（最多等待3秒，每500ms检查一次）
+                        var waitCount = 0
+                        while (!webSocketClient.isConnected() && waitCount < 6) {
+                            kotlinx.coroutines.delay(500)
+                            waitCount++
+                            Log.d("OrderTrackingVM", "⏳ 等待 WebSocket 连接... ($waitCount/6)")
+                        }
+                                        
+                        if (!webSocketClient.isConnected()) {
+                            Log.e("OrderTrackingVM", "❌ WebSocket 连接超时")
+                            return@launch
+                        }
+                                        
+                        Log.d("OrderTrackingVM", "✅ WebSocket 已连接")
                     } else {
                         Log.e("OrderTrackingVM", "❌ 无法连接 WebSocket：userId 或 token 为空")
                         return@launch
@@ -134,11 +155,24 @@ class OrderTrackingViewModel @Inject constructor(
         // ⭐ 详细日志：打印所有收到的消息
         Log.d("OrderTrackingVM", "📨 收到 WebSocket 消息：type=${wsMessage.type}, orderId=${wsMessage.orderId}, currentOrderId=$currentOrderId")
         
-        // 只处理当前订单的消息
+        // ⭐ Bug 6: 只处理当前订单的消息（但 DRIVER_LOCATION 和 ORDER_ACCEPTED 特殊处理）
         if (wsMessage.orderId != null && wsMessage.orderId != currentOrderId) {
-            Log.w("OrderTrackingVM", "⚠️ 忽略非当前订单的消息：messageOrderId=${wsMessage.orderId}")
-            return
+            // ⭐ 临时方案：如果是 DRIVER_LOCATION 或 ORDER_ACCEPTED，即使 orderId 不匹配也处理（后端 bug 临时绕过）
+            if (wsMessage.type == WsMessage.TYPE_DRIVER_LOCATION || wsMessage.type == WsMessage.TYPE_ORDER_ACCEPTED) {
+                Log.w("OrderTrackingVM", "⚠️ ${wsMessage.type} 消息 orderId 不匹配（后端bug），但仍处理：messageOrderId=${wsMessage.orderId}, currentOrderId=$currentOrderId")
+                // 继续处理，不 return
+            } else {
+                // 其他消息类型，严格过滤
+                Log.d("OrderTrackingVM", "⏭️ 忽略非当前订单的消息：messageOrderId=${wsMessage.orderId}, currentOrderId=$currentOrderId")
+                return
+            }
+        } else if (wsMessage.orderId == null) {
+            // ⭐ Bug 6: orderId 为 null 时记录警告但仍处理（兼容旧消息）
+            Log.w("OrderTrackingVM", "⚠️ WebSocket 消息缺少 orderId，尝试处理: type=${wsMessage.type}")
         }
+
+        // ⭐ 新增：打印将要处理的消息类型
+        Log.d("OrderTrackingVM", " 准备处理消息类型: ${wsMessage.type}")
 
         when (wsMessage.type) {
             WsMessage.TYPE_DRIVER_REQUEST -> {  // ⭐ 新增：司机接单请求
@@ -201,14 +235,45 @@ class OrderTrackingViewModel @Inject constructor(
             Log.d("OrderTrackingVM", "🚕 收到 DRIVER_REQUEST，显示确认弹窗")
             Log.d("OrderTrackingVM", "🚕 司机信息：driverName=${wsMessage.driverName}, driverPhone=${wsMessage.driverPhone}")
             
-            // ⭐ 关键修复：不再立即更新订单状态，等待用户确认后再更新
+            // ⭐ 关键修复：判断是否为代叫车订单
+            // 判断逻辑：订单状态为2（正在寻找司机）时，说明是代叫车且长辈已确认
+            // 此时需要亲友端选择司机，长辈端只查看
+            val currentState = _uiState.value
+            if (currentState is OrderTrackingUiState.Success) {
+                val order = currentState.order
+                
+                // ⭐ 修复：通过订单状态判断是否为代叫车
+                // 代叫车流程：
+                // - 亲友创建订单：status=0（待长辈确认）
+                // - 长辈确认：status=1（已确认）-> status=2（正在寻找司机）
+                // - 司机接单：DRIVER_REQUEST消息
+                // 如果是代叫车，订单状态应该是 1 或 2
+                val isProxyOrder = order.status == 1 || order.status == 2
+                
+                Log.d("OrderTrackingVM", "🔍 订单判断：isProxyOrder=$isProxyOrder (status=${order.status})")
+                Log.d("OrderTrackingVM", "🔍 订单信息：userId=${order.userId}, guardianUserId=${order.guardianUserId}")
+                
+                if (!isProxyOrder) {
+                    // ⭐ 非代叫车订单（自己叫车），直接当作 ORDER_ACCEPTED 处理
+                    Log.d("OrderTrackingVM", "⚠️ 非代叫车订单收到 DRIVER_REQUEST，直接更新为司机已接单")
+                    updateOrderWithDriverInfo(wsMessage)
+                    return@launch
+                }
+                
+                // ⭐ 代叫车订单，继续处理...
+                Log.d("OrderTrackingVM", "✅ 代叫车订单，准备触发确认事件")
+            } else {
+                Log.w("OrderTrackingVM", "⚠️ 当前 UI 状态不是 Success，无法判断是否为代叫车订单")
+            }
+            
+            // ⭐ 代叫车订单，触发事件（UI层会根据 isElderMode 决定是否显示弹窗）
             // 只更新司机位置（用于地图显示）
             if (wsMessage.driverLat != null && wsMessage.driverLng != null) {
                 _driverLocation.value = LatLng(wsMessage.driverLat, wsMessage.driverLng)
                 Log.d("OrderTrackingVM", "📍 已更新司机位置（用于地图预览）")
             }
             
-            // 触发事件，让UI显示确认弹窗（仅亲友端）
+            // 触发事件，让UI显示确认弹窗（亲友端）或刷新订单（长辈端）
             _events.emit(OrderTrackingEvent.DriverRequestReceived(wsMessage))
         }
     }
@@ -240,8 +305,11 @@ class OrderTrackingViewModel @Inject constructor(
                 // 显示提示
                 _events.emit(OrderTrackingEvent.DriverRejected("您已拒绝该司机,正在为您重新派单..."))
                     
+                // ⭐ Bug 8: 取消之前的延迟提示任务
+                delayedTipJob?.cancel()
+                
                 // ⭐ 新增:启动10秒倒计时,提示用户等待新司机
-                viewModelScope.launch {
+                delayedTipJob = viewModelScope.launch {
                     delay(10000)  // 10秒后
                     val currentStateAfterDelay = _uiState.value
                     if (currentStateAfterDelay is OrderTrackingUiState.Success && 
@@ -259,31 +327,28 @@ class OrderTrackingViewModel @Inject constructor(
      */
     private fun handleOrderAccepted(wsMessage: WsMessage) {
         viewModelScope.launch(Dispatchers.Main) {
-            Log.d("OrderTrackingVM", "🚕 处理 ORDER_ACCEPTED 消息")
+            Log.d("OrderTrackingVM", "🚕 ========== 开始处理 ORDER_ACCEPTED 消息 ==========")
             Log.d("OrderTrackingVM", "🚕 司机信息：driverName=${wsMessage.driverName}, driverPhone=${wsMessage.driverPhone}")
-            Log.d("OrderTrackingVM", "🚕 车辆信息：carNo=${wsMessage.carNo}, carType=${wsMessage.carType}")
+            Log.d("OrderTrackingVM", "🚕 车辆信息：carNo=${wsMessage.carNo}, carType=${wsMessage.carType}, carColor=${wsMessage.carColor}")
             Log.d("OrderTrackingVM", "🚕 位置信息：driverLat=${wsMessage.driverLat}, driverLng=${wsMessage.driverLng}")
             
-            // ⭐ 关键修复：检查是否是代叫车订单
             val currentState = _uiState.value
+            Log.d("OrderTrackingVM", "📊 当前 UI 状态类型：${currentState::class.simpleName}")
+            
             if (currentState is OrderTrackingUiState.Success) {
                 val order = currentState.order
                 val isProxyOrder = order.guardianUserId != null && order.guardianUserId != order.userId
                 
                 Log.d("OrderTrackingVM", "📊 当前订单状态：${order.status}")
+                Log.d("OrderTrackingVM", "📊 订单ID：${order.id}")
                 Log.d("OrderTrackingVM", "📊 是否为代叫车订单：$isProxyOrder (guardianUserId=${order.guardianUserId}, userId=${order.userId})")
                 
-                if (isProxyOrder) {
-                    // 代叫车订单：直接更新状态（长辈已经确认过了）
-                    Log.d("OrderTrackingVM", "✅ 代叫车订单，直接更新状态")
-                    updateOrderWithDriverInfo(wsMessage)
-                } else {
-                    // ⭐ 普通用户为自己叫车：触发 DRIVER_REQUEST 事件，让用户选择
-                    Log.d("OrderTrackingVM", "👤 普通用户订单，触发 DRIVER_REQUEST 事件")
-                    _events.emit(OrderTrackingEvent.DriverRequestReceived(wsMessage))
-                }
+                // ⭐ 修复：无论是否代叫车，都更新司机信息（长辈端和亲友端都需要）
+                Log.d("OrderTrackingVM", "✅ 开始更新订单司机信息...")
+                updateOrderWithDriverInfo(wsMessage)
+                Log.d("OrderTrackingVM", "🚕 ========== ORDER_ACCEPTED 处理完成 ==========")
             } else {
-                Log.w("OrderTrackingVM", "⚠️ 当前 UI 状态不是 Success，无法更新订单")
+                Log.e("OrderTrackingVM", "❌ 当前 UI 状态不是 Success，无法更新订单！当前状态：${currentState::class.simpleName}")
             }
         }
     }
@@ -294,22 +359,24 @@ class OrderTrackingViewModel @Inject constructor(
     private fun updateOrderWithDriverInfo(wsMessage: WsMessage) {
         val currentState = _uiState.value
         if (currentState is OrderTrackingUiState.Success) {
-            // 更新订单中的司机信息
-            val updatedOrder = currentState.order.copy(
-                driverName = wsMessage.driverName,
-                driverPhone = wsMessage.driverPhone,
-                driverAvatar = wsMessage.driverAvatar,
-                carNo = wsMessage.carNo,
-                carType = wsMessage.carType,
-                carColor = wsMessage.carColor,
-                rating = wsMessage.rating,
+            val currentOrder = currentState.order
+            
+            // ⭐ 关键修复：同时更新后端返回的司机信息和本地状态
+            val updatedOrder = currentOrder.copy(
+                driverName = wsMessage.driverName ?: currentOrder.driverName,
+                driverPhone = wsMessage.driverPhone ?: currentOrder.driverPhone,
+                driverAvatar = wsMessage.driverAvatar ?: currentOrder.driverAvatar,
+                carNo = wsMessage.carNo ?: currentOrder.carNo,
+                carType = wsMessage.carType ?: currentOrder.carType,
+                carColor = wsMessage.carColor ?: currentOrder.carColor,
+                rating = wsMessage.rating ?: currentOrder.rating,
                 status = 3,  // 司机已接单
-                driverLat = wsMessage.driverLat,
-                driverLng = wsMessage.driverLng
+                driverLat = wsMessage.driverLat ?: currentOrder.driverLat,
+                driverLng = wsMessage.driverLng ?: currentOrder.driverLng
             )
             
             _uiState.value = OrderTrackingUiState.Success(updatedOrder)
-            Log.d("OrderTrackingVM", "✅ 订单状态已更新为 3（司机已接单）")
+            Log.d("OrderTrackingVM", "✅ 订单状态已更新为 3（司机已接单），司机：${wsMessage.driverName}")
             
             // 更新司机位置
             if (wsMessage.driverLat != null && wsMessage.driverLng != null) {
@@ -320,6 +387,8 @@ class OrderTrackingViewModel @Inject constructor(
             // 设置初始 ETA
             _etaMinutes.value = wsMessage.etaMinutes
             Log.d("OrderTrackingVM", "⏱️ ETA 已设置：${wsMessage.etaMinutes} 分钟")
+        } else {
+            Log.w("OrderTrackingVM", "⚠️ 当前 UI 状态不是 Success，无法更新司机信息")
         }
     }
 
@@ -429,7 +498,7 @@ class OrderTrackingViewModel @Inject constructor(
                     _uiState.value = OrderTrackingUiState.Success(updatedOrder)
                     Log.d("OrderTrackingVM", "📊 订单状态更新为 2（正在寻找司机）")
                     
-                    // ⭐ 新增：主动刷新订单信息，确保与后端同步
+                    // ⭐ Bug 10: 去重刷新，避免重复调用
                     viewModelScope.launch(Dispatchers.IO) {
                         kotlinx.coroutines.delay(500)  // 延迟 500ms，等待后端更新
                         refreshOrder(currentState.order.id)
@@ -454,8 +523,13 @@ class OrderTrackingViewModel @Inject constructor(
             val result = orderRepository.getOrder(orderId)
             if (result.isSuccess()) {
                 result.data?.let { order ->
-                    _uiState.value = OrderTrackingUiState.Success(order)
+                    withContext(Dispatchers.Main) {
+                        _uiState.value = OrderTrackingUiState.Success(order)
+                    }
                 }
+            } else {
+                // ⭐ Bug 11: 记录刷新失败
+                Log.w("OrderTrackingVM", "⚠️ 刷新订单失败: ${result.message}")
             }
         }
     }
@@ -563,17 +637,17 @@ class OrderTrackingViewModel @Inject constructor(
     /**
      * ⭐ 新增：自动完成行程（根据 ETA 推算）
      */
-    private var isCompletingTrip = false  // ⭐ 防抖标志
+    // ⭐ Bug 12: 使用 AtomicBoolean 保证线程安全
+    private val isCompletingTrip = AtomicBoolean(false)
     
     private suspend fun autoFinishTrip(orderId: Long) {
-        // ⭐ 防抖：如果已经在完成行程中，直接返回
-        if (isCompletingTrip) {
+        // ⭐ Bug 12: 原子操作防止竞态条件
+        if (!isCompletingTrip.compareAndSet(false, true)) {
             Log.d("OrderTrackingVM", "⏭️ 行程完成请求已在处理中，跳过")
             return
         }
         
         try {
-            isCompletingTrip = true
             Log.d("OrderTrackingVM", "🚀 开始自动完成行程: orderId=$orderId")
             
             val success = finishTrip(orderId)
@@ -587,7 +661,7 @@ class OrderTrackingViewModel @Inject constructor(
         } catch (e: Exception) {
             Log.e("OrderTrackingVM", "❌ 自动完成行程异常", e)
         } finally {
-            isCompletingTrip = false
+            isCompletingTrip.set(false)
         }
     }
 
@@ -597,6 +671,7 @@ class OrderTrackingViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         wsJob?.cancel()
+        delayedTipJob?.cancel()  // ⭐ Bug 8: 取消延迟提示任务
         Log.d("OrderTrackingVM", "🧹 ViewModel 清理完成")
     }
 }

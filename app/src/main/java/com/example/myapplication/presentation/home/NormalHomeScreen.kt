@@ -493,9 +493,9 @@ fun NormalHomeScreen(
             }
         }
         
-        // 5. 右侧按钮组 - ⭐ 修复：上移1cm（约38dp），329-38=291dp
+        // 5. 右侧按钮组 - ⭐ 修复：再上移1cm（291-38=253dp）
         Column(
-            modifier = Modifier.align(Alignment.TopEnd).padding(top = 291.dp, end = 12.dp),  // ⭐ 上移1cm
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 253.dp, end = 12.dp),  // ⭐ 再上移1cm
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
                 // 定位按钮
@@ -1203,11 +1203,32 @@ fun NormalHomeScreen(
                                 
                                 if (targetPoi != null && elder.userId != null) {
                                     Log.d("NormalHomeScreen", "🚗 代叫车：长辈=${elder.name}, 目的地=${targetPoi.name}, destAddress=${targetPoi.address}, lat=${targetPoi.lat}, lng=${targetPoi.lng}")
+                                    
+                                    // ⭐ 关键修复：从 SharedPreferences 读取长辈实时位置作为起点
+                                    val prefs = context.getSharedPreferences("taxi_destination", android.content.Context.MODE_PRIVATE)
+                                    val elderStartLat = prefs.getFloat("elder_start_lat", 0f).toDouble().takeIf { it != 0.0 }
+                                    val elderStartLng = prefs.getFloat("elder_start_lng", 0f).toDouble().takeIf { it != 0.0 }
+                                    val elderLocationTimestamp = prefs.getLong("elder_location_timestamp", 0L)
+                                    
+                                    // 检查长辈位置是否有效（不超过 5 分钟）
+                                    val isElderLocationValid = elderStartLat != null && 
+                                        elderStartLng != null && 
+                                        elderLocationTimestamp != 0L &&
+                                        (System.currentTimeMillis() - elderLocationTimestamp) < 5 * 60 * 1000
+                                    
+                                    if (isElderLocationValid) {
+                                        Log.d("NormalHomeScreen", "✅ 使用长辈实时位置作为起点：lat=$elderStartLat, lng=$elderStartLng")
+                                    } else {
+                                        Log.w("NormalHomeScreen", "⚠️ 长辈位置无效或过期，将使用当前位置作为起点")
+                                    }
+                                    
                                     viewModel.createProxyOrderForElder(
                                         elderUserId = elder.userId,
                                         poiName = targetPoi.address ?: targetPoi.name,  // ⭐ 修复：优先使用完整地址
                                         destLat = targetPoi.lat,
-                                        destLng = targetPoi.lng
+                                        destLng = targetPoi.lng,
+                                        startLat = if (isElderLocationValid) elderStartLat else null,  // ⭐ 新增：传递长辈位置作为起点
+                                        startLng = if (isElderLocationValid) elderStartLng else null   // ⭐ 新增：传递长辈位置作为起点
                                     )
                                     showProxyOrderDialog = false
                                     Toast.makeText(context, "已向${elder.name}发送叫车请求，请等待确认", Toast.LENGTH_LONG).show()

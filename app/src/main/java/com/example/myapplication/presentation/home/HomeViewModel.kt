@@ -1262,6 +1262,15 @@
             Log.d("HomeViewModel", "=== 开始创建订单 (HTTP API 方式) ===")
             Log.d("HomeViewModel", "目的地名称参数：$destName, elderId: $elderId")
             
+            // ⭐ 关键修复：长辈端禁止创建订单
+            if (_isElderMode.value) {
+                Log.w("HomeViewModel", "⛔ 长辈端禁止创建订单，立即拦截")
+                viewModelScope.launch {
+                    _orderState.value = OrderState.Error("长辈端不支持下单功能")
+                }
+                return
+            }
+            
             viewModelScope.launch {
                 try {
                     _isCreatingOrder.value = true
@@ -1342,8 +1351,30 @@
                     
                     // ⭐ 修改：使用 HTTP API 创建订单 (能直接获取响应)
                     // ⭐ 关键修复：如果 _startLocation 为 null，使用当前位置作为起点
-                    val startLat = _startLocation.value?.latitude ?: _currentLocation.value?.latitude
-                    val startLng = _startLocation.value?.longitude ?: _currentLocation.value?.longitude
+                    // ⭐ 新增：优先从 SharedPreferences 读取长辈起点位置（代叫车场景）
+                    var startLat: Double? = null
+                    var startLng: Double? = null
+                    
+                    try {
+                        val prefs = appContext.getSharedPreferences("taxi_destination", android.content.Context.MODE_PRIVATE)
+                        val elderStartLat = prefs.getFloat("elder_start_lat", 0f)
+                        val elderStartLng = prefs.getFloat("elder_start_lng", 0f)
+                        
+                        if (elderStartLat != 0f && elderStartLng != 0f) {
+                            startLat = elderStartLat.toDouble()
+                            startLng = elderStartLng.toDouble()
+                            Log.d("HomeViewModel", "✅ 从 SharedPreferences 读取长辈起点：lat=$startLat, lng=$startLng")
+                        }
+                    } catch (e: Exception) {
+                        Log.e("HomeViewModel", "❌ 读取 SharedPreferences 失败", e)
+                    }
+                    
+                    // 降级方案：使用 _startLocation 或 _currentLocation
+                    if (startLat == null || startLng == null) {
+                        startLat = _startLocation.value?.latitude ?: _currentLocation.value?.latitude
+                        startLng = _startLocation.value?.longitude ?: _currentLocation.value?.longitude
+                        Log.d("HomeViewModel", "⚠️ 使用本地位置作为起点：lat=$startLat, lng=$startLng")
+                    }
                     
                     if (startLat == null || startLng == null) {
                         Log.e("HomeViewModel", "❌ 无法获取起点位置")
@@ -1401,19 +1432,6 @@
                             _orderState.value = OrderState.Success(order)
                             // ⭐ 触发事件，通知 UI 跳转
                             _events.send(HomeEvent.OrderCreated(order))
-                            
-                            // ⭐ 关键修复：通过事件总线通知 ChatViewModel 更新 sharedLocation
-                            if (elderId != null) {
-                                viewModelScope.launch {
-                                    try {
-                                        // 发送全局事件，让 ChatViewModel 监听并更新
-                                        com.example.myapplication.MyApplication.sendOrderCreatedEvent(order.id, elderId)
-                                        Log.d("HomeViewModel", "✅ 已发送订单创建事件: orderId=${order.id}, elderId=$elderId")
-                                    } catch (e: Exception) {
-                                        Log.e("HomeViewModel", "❌ 发送订单创建事件失败", e)
-                                    }
-                                }
-                            }
                             
                             // ⭐ 修复：延迟发送导航事件，确保 orderState 已被 UI 层收集
                             viewModelScope.launch {
@@ -2035,8 +2053,8 @@
                                         
                                         _orderState.value = OrderState.Success(tempOrder)
                                         _events.send(HomeEvent.OrderCreated(tempOrder))
-                                        
-                                        // ⭐ 修复：普通用户代叫车后也跳转到行程追踪，显示“等待长辈确认”状态
+                                                                                
+                                        // ⭐ 修复：普通用户代叫车后也跳转到行程追踪，显示"等待长辈确认"状态
                                         launch {
                                             kotlinx.coroutines.delay(500)  // 延迟 500ms，让 UI 动画完成
                                             _events.send(HomeEvent.NavigateToOrderTracking(tempOrder.id))

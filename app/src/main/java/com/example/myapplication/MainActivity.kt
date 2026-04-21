@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -302,7 +303,7 @@ class MainActivity : ComponentActivity() {
                                     guardianName = contactName,
                                     onBackClick = { navController.popBackStack() },
                                     isElderMode = isElderMode,
-                                    onNavigateToHomeWithDestination = { name, lat, lng ->
+                                    onNavigateToHomeWithDestination = fun(name: String, lat: Double, lng: Double) {
                                         // ⭐ 一键填充到打车界面
                                         Log.d("MainActivity", "📍 [私聊] 从聊天跳转到首页，目的地：$name")
                                         
@@ -318,6 +319,7 @@ class MainActivity : ComponentActivity() {
                                         
                                         // ⭐ 从 ChatViewModel 获取长辈实时位置并保存
                                         val sharedLocation = chatViewModel.sharedLocation.value
+                                        Log.d("MainActivity", "🔍 [私聊] sharedLocation=$sharedLocation")
                                         if (sharedLocation?.elderCurrentLat != null && sharedLocation.elderCurrentLng != null) {
                                             prefs.edit()
                                                 .putFloat("elder_start_lat", sharedLocation.elderCurrentLat.toFloat())
@@ -327,6 +329,20 @@ class MainActivity : ComponentActivity() {
                                             Log.d("MainActivity", "✅ [私聊] 已保存长辈实时位置：lat=${sharedLocation.elderCurrentLat}, lng=${sharedLocation.elderCurrentLng}")
                                         } else {
                                             Log.w("MainActivity", "⚠️ [私聊] 未收到长辈实时位置，将使用当前位置")
+                                            Log.w("MainActivity", "⚠️ [私聊] sharedLocation.elderCurrentLat=${sharedLocation?.elderCurrentLat}")
+                                            Log.w("MainActivity", "⚠️ [私聊] sharedLocation.elderCurrentLng=${sharedLocation?.elderCurrentLng}")
+                                        }
+                                        
+                                        // ⭐ 关键修复：只有亲友端才能创建订单，长辈端不能创建
+                                        val isElderMode = homeViewModel.isElderMode.value
+                                        if (isElderMode) {
+                                            Log.w("MainActivity", "⛔ [私聊] 长辈端禁止创建订单，直接拦截")
+                                            Toast.makeText(
+                                                context,
+                                                "😊 温馨提示：\n长辈端不支持直接下单叫车哦~\n请联系您的亲友帮忙代叫 🙏",
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                            return  // ⭐ 匿名函数中直接使用 return 即可
                                         }
                                         
                                         // ⭐ 关键修复：先跳转到首页，然后延迟创建订单
@@ -346,6 +362,7 @@ class MainActivity : ComponentActivity() {
                                             // 在 UI 线程中调用 createOrder
                                             withContext(kotlinx.coroutines.Dispatchers.Main) {
                                                 Log.d("MainActivity", "🚕 [私聊] 开始创建代叫车订单：$name")
+                                                
                                                 // ⭐ 关键修复：传递长辈ID（从 ChatViewModel 获取）
                                                 val elderId = chatViewModel.sharedLocation.value?.elderId
                                                 Log.d("MainActivity", "🚕 [私聊] 长辈ID：$elderId")
@@ -383,6 +400,11 @@ class MainActivity : ComponentActivity() {
                                             }
                                             launchSingleTop = true
                                         }
+                                    },
+                                    onConfirmProxyOrder = { orderId, confirmed ->
+                                        // ⭐ 新增：长辈确认/拒绝代叫车
+                                        Log.d("MainActivity", "📱 [私聊] 长辈${if (confirmed) "同意" else "拒绝"}代叫车，orderId=$orderId")
+                                        homeViewModel.confirmProxyOrder(orderId, confirmed, if (!confirmed) "暂时不需要" else null)
                                     }
                                 )
                             } else {
@@ -604,7 +626,11 @@ fun MyApplicationApp(
                     val elderId = location.elderId
                     val alreadyShown = hasShownShareDialog[elderId] == true
                     
-                    if (!alreadyShown) {
+                    // ⭐ 关键修复：检查分享是否过期（超过30秒不弹窗）
+                    val isExpired = location.elderLocationTimestamp != null && 
+                        (System.currentTimeMillis() - location.elderLocationTimestamp) > 30 * 1000
+                    
+                    if (!alreadyShown && !isExpired) {
                         Log.d("MainActivity", "🔔 [全局] 收到收藏分享：${location.favoriteName}")
                         
                         // ⭐ 修复：检查当前是否在私聊界面
@@ -626,7 +652,12 @@ fun MyApplicationApp(
                             Log.d("MainActivity", "⏭️ [全局] 当前在私聊界面，跳过全局弹窗，由 PrivateChatScreen 显示卡片")
                         }
                     } else {
-                        Log.d("MainActivity", "⏭️ [全局] 该长辈的分享已弹过窗，跳过")
+                        if (alreadyShown) {
+                            Log.d("MainActivity", "⏭️ [全局] 该长辈的分享已弹过窗，跳过")
+                        }
+                        if (isExpired) {
+                            Log.d("MainActivity", "⏭️ [全局] 分享已过期（>${30}秒），跳过")
+                        }
                     }
                 }
             }
@@ -659,6 +690,12 @@ fun MyApplicationApp(
                 // ⭐ 关键修复：检查是否已经显示过该订单的弹窗
                 if (pendingOrderId == proxyOrderRequest!!.orderId) {
                     Log.d("MainActivity", "⏭️ [全局] 该订单已显示过弹窗，跳过")
+                    return@LaunchedEffect
+                }
+                
+                // ⭐ 新增：再次检查是否为长辈端，防止竞态条件
+                if (!isElderMode) {
+                    Log.w("MainActivity", "⚠️ [全局] 当前不是长辈端，忽略代叫车请求")
                     return@LaunchedEffect
                 }
                 
@@ -757,6 +794,8 @@ fun MyApplicationApp(
                             } ?: run {
                                 Log.e("MainActivity", "❌❌❌ 错误：pendingOrderId 为 null！")
                             }
+                            // ⭐ 关键修复：清除请求状态，避免无限循环
+                            homeViewModel.clearProxyOrderRequest()
                             showGlobalProxyOrderDialog = false
                             pendingOrderId = null
                         },
@@ -782,6 +821,8 @@ fun MyApplicationApp(
                             } ?: run {
                                 Log.e("MainActivity", "❌❌❌ 错误：pendingOrderId 为 null！")
                             }
+                            // ⭐ 关键修复：清除请求状态，避免无限循环
+                            homeViewModel.clearProxyOrderRequest()
                             showGlobalProxyOrderDialog = false
                             pendingOrderId = null
                         },

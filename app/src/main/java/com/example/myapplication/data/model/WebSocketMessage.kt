@@ -105,5 +105,6 @@ data class GuardPushMessage(
     val destLng: Double? = null,               // 目的地经度
     val startLat: Double? = null,              // 起点纬度（长辈位置）
     val startLng: Double? = null,              // 起点经度（长辈位置）
-    val proxyUserId: Long? = null              // 代叫人ID
+    val proxyUserId: Long? = null,             // 代叫人ID
+    val finalAmount: Double? = null            // 最终费用（行程完成）
 )

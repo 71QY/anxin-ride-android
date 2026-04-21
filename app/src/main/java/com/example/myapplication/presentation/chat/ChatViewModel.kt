@@ -219,29 +219,6 @@ class ChatViewModel @Inject constructor(
                 addSystemMessage("⚠️ 消息接收异常：${e.message}")
             }
         }
-        
-        // ⭐ 新增：监听订单创建事件，更新 sharedLocation 中的 orderId
-        viewModelScope.launch {
-            try {
-                com.example.myapplication.MyApplication.orderCreatedEvent.collect { event ->
-                    Log.d("ChatViewModel", "📩 收到订单创建事件：orderId=${event.orderId}, elderId=${event.elderId}")
-                    
-                    val currentSharedLocation = _sharedLocation.value
-                    if (currentSharedLocation != null && currentSharedLocation.elderId == event.elderId) {
-                        val updatedLocation = currentSharedLocation.copy(
-                            orderId = event.orderId,
-                            orderStatus = 0  // 0-待确认
-                        )
-                        _sharedLocation.value = updatedLocation
-                        Log.d("ChatViewModel", "✅ 已更新 sharedLocation 的 orderId: ${event.orderId}")
-                    } else {
-                        Log.w("ChatViewModel", "⚠️ 未找到匹配的 sharedLocation，elderId=${event.elderId}")
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("ChatViewModel", "❌ 订单创建事件监听异常", e)
-            }
-        }
 
         // ⭐ 获取初始位置
         updateLocationFromGPS()
@@ -273,6 +250,8 @@ class ChatViewModel @Inject constructor(
                         val elderCurrentLng = prefs.getFloat("elderCurrentLng_${userId}", 0f).toDouble().takeIf { it != 0.0 }
                         val elderLocationTimestamp = prefs.getLong("elderLocationTimestamp_${userId}", 0L).takeIf { it != 0L }
                         val orderId = prefs.getLong("orderId_${userId}", -1L).takeIf { it != -1L }
+                        // ⭐ 关键修复：从缓存恢复 orderStatus
+                        val orderStatus = prefs.getInt("orderStatus_${userId}", 0)
                         
                         if (favoriteName.isNotBlank()) {
                             val restoredLocation = SharedLocationInfo(
@@ -286,10 +265,10 @@ class ChatViewModel @Inject constructor(
                                 elderCurrentLng = elderCurrentLng,
                                 elderLocationTimestamp = elderLocationTimestamp,
                                 orderId = orderId,
-                                orderStatus = 0  // 默认待确认
+                                orderStatus = orderStatus  // ⭐ 关键修复：从缓存恢复订单状态
                             )
                             _sharedLocation.value = restoredLocation
-                            Log.d("ChatViewModel", "✅ [初始化] 成功恢复 sharedLocation: favoriteName=$favoriteName, orderId=$orderId")
+                            Log.d("ChatViewModel", "✅ [初始化] 成功恢复 sharedLocation: favoriteName=$favoriteName, orderId=$orderId, orderStatus=$orderStatus")
                         } else {
                             Log.d("ChatViewModel", "⚠️ [初始化] 本地缓存为空")
                         }
@@ -447,6 +426,77 @@ class ChatViewModel @Inject constructor(
     fun syncElderMode(isElder: Boolean) {
         _isElderMode.value = isElder
         Log.d("ChatViewModel", "👴 同步长辈模式: isElder=$isElder")
+        
+        // ⭐ 关键修复：如果是长辈模式且 sharedLocation 为空，触发缓存恢复
+        if (isElder && _sharedLocation.value == null) {
+            Log.d("ChatViewModel", "🔄 syncElderMode: 长辈模式已启用，sharedLocation 为空，触发缓存恢复")
+            restoreSharedLocationFromCache()
+        }
+    }
+    
+    /**
+     * ⭐ 新增：从 SharedPreferences 恢复 sharedLocation（长辈端必备）
+     */
+    private fun restoreSharedLocationFromCache() {
+        viewModelScope.launch {
+            try {
+                val userId = tokenManager.getUserId()
+                if (userId == null) {
+                    Log.w("ChatViewModel", "⚠️ [恢复缓存] 用户未登录，跳过恢复")
+                    return@launch
+                }
+                
+                // ⭐ 如果已经有 sharedLocation，不需要恢复
+                if (_sharedLocation.value != null) {
+                    Log.d("ChatViewModel", "✅ [恢复缓存] sharedLocation 已存在，跳过恢复")
+                    return@launch
+                }
+                
+                Log.d("ChatViewModel", "🔄 [恢复缓存] 尝试从本地缓存恢复 sharedLocation...")
+                val prefs = MyApplication.instance.getSharedPreferences("shared_location_cache", android.content.Context.MODE_PRIVATE)
+                val cachedElderId = prefs.getLong("elderId_${userId}", -1L)
+                
+                Log.d("ChatViewModel", "🔍 [恢复缓存] cachedElderId=$cachedElderId, userId=$userId")
+                
+                if (cachedElderId == userId) {
+                    val elderName = prefs.getString("elderName_${userId}", "") ?: ""
+                    val favoriteName = prefs.getString("favoriteName_${userId}", "") ?: ""
+                    val favoriteAddress = prefs.getString("favoriteAddress_${userId}", "") ?: ""
+                    val latitude = prefs.getFloat("latitude_${userId}", 0f).toDouble()
+                    val longitude = prefs.getFloat("longitude_${userId}", 0f).toDouble()
+                    val elderCurrentLat = prefs.getFloat("elderCurrentLat_${userId}", 0f).toDouble().takeIf { it != 0.0 }
+                    val elderCurrentLng = prefs.getFloat("elderCurrentLng_${userId}", 0f).toDouble().takeIf { it != 0.0 }
+                    val elderLocationTimestamp = prefs.getLong("elderLocationTimestamp_${userId}", 0L).takeIf { it != 0L }
+                    val orderId = prefs.getLong("orderId_${userId}", -1L).takeIf { it != -1L }
+                    
+                    Log.d("ChatViewModel", "🔍 [恢复缓存] favoriteName=$favoriteName, orderId=$orderId")
+                    
+                    if (favoriteName.isNotBlank()) {
+                        val restoredLocation = SharedLocationInfo(
+                            elderId = cachedElderId,
+                            elderName = elderName.ifBlank { "亲友" },
+                            favoriteName = favoriteName,
+                            favoriteAddress = favoriteAddress,
+                            latitude = latitude,
+                            longitude = longitude,
+                            elderCurrentLat = elderCurrentLat,
+                            elderCurrentLng = elderCurrentLng,
+                            elderLocationTimestamp = elderLocationTimestamp,
+                            orderId = orderId,
+                            orderStatus = 0  // 默认待确认
+                        )
+                        _sharedLocation.value = restoredLocation
+                        Log.d("ChatViewModel", "✅ [恢复缓存] 成功恢复 sharedLocation: favoriteName=$favoriteName, orderId=$orderId")
+                    } else {
+                        Log.d("ChatViewModel", "⚠️ [恢复缓存] 本地缓存为空")
+                    }
+                } else {
+                    Log.d("ChatViewModel", "⚠️ [恢复缓存] 没有该用户的分享记录 (userId=$userId)")
+                }
+            } catch (e: Exception) {
+                Log.e("ChatViewModel", "❌ [恢复缓存] 恢复 sharedLocation 失败", e)
+            }
+        }
     }
     
     // ⭐ 新增：上报位置到后端
@@ -1428,6 +1478,9 @@ class ChatViewModel @Inject constructor(
     // ⭐ 新增：处理 IMAGE_RECOGNITION 响应（对齐后端文档）
     private fun handleImageRecognitionResponse(data: AgentSearchResponse) {
         Log.d("ChatViewModel", "📸 IMAGE_RECOGNITION 类型")
+        Log.d("ChatViewModel", "📸 data.data=${data.data}")
+        Log.d("ChatViewModel", "📸 data.places=${data.places}")
+        Log.d("ChatViewModel", "📸 data.data?.places=${data.data?.places}")
         
         // ⭐ 检查是否直接返回订单信息
         val orderInfo = data.data?.order
@@ -1446,13 +1499,12 @@ class ChatViewModel @Inject constructor(
             return
         }
         
-        // ⭐ 优先从嵌套的 data.data.places 获取，其次从顶层 data.places 获取
-        val nestedPlaces = data.data?.places
-        val topLevelPlaces = data.places ?: data.candidates
-        val places = nestedPlaces ?: topLevelPlaces ?: emptyList()
+        // ⭐ 关键修复：后端 data.data.places 返回的是 JSON 引用格式 {"$ref":"$.places"}，不是真实数据
+        // 应该直接从顶层 data.places 获取实际地点列表
+        val places = data.places ?: data.candidates ?: emptyList()
         
-        Log.d("ChatViewModel", "nested places count=${nestedPlaces?.size}, top-level places count=${topLevelPlaces?.size}")
-        Log.d("ChatViewModel", "最终 places count=${places.size}")
+        Log.d("ChatViewModel", "📸 最终 places count=${places.size}")
+        Log.d("ChatViewModel", "📸 places details=${places.map { it.name }}")
         
         if (places.isNotEmpty()) {
             _poiList.value = places.map {
@@ -1768,19 +1820,35 @@ class ChatViewModel @Inject constructor(
 
     private fun parseServerMessage(json: String) {
         try {
-            // ⭐ 新增：消息去重，避免重复显示相同的消息
-            if (processedMessages.contains(json)) {
-                // Log.d("ChatViewModel", "⚠️ 检测到重复消息，已跳过")  // ⭐ 移除：减少日志噪音
+            // ⭐ 新增：过滤心跳响应（pong），不处理
+            if (json.contains("\"type\":\"pong\"") || json.contains("\"type\": \"pong\"")) {
+                Log.d("ChatViewModel", "💓 收到 pong 心跳响应，跳过处理")
                 return
             }
-            processedMessages.add(json)
-
-            // ⭐ 限制缓存大小，避免内存泄漏
-            if (processedMessages.size > 100) {
-                val iterator = processedMessages.iterator()
-                if (iterator.hasNext()) {
-                    iterator.remove()
+            
+            // ⭐ 修复：使用 synchronized 保护 processedMessages 的并发访问
+            val shouldSkip = synchronized(processedMessages) {
+                // ⭐ 新增：消息去重，避免重复显示相同的消息
+                if (processedMessages.contains(json)) {
+                    // Log.d("ChatViewModel", "⚠️ 检测到重复消息，已跳过")  // ⭐ 移除：减少日志噪音
+                    true
+                } else {
+                    processedMessages.add(json)
+                    
+                    // ⭐ 限制缓存大小，避免内存泄漏
+                    if (processedMessages.size > 100) {
+                        // ⭐ 修复：使用 firstOrNull() 获取第一个元素，然后移除
+                        val firstElement = processedMessages.firstOrNull()
+                        if (firstElement != null) {
+                            processedMessages.remove(firstElement)
+                        }
+                    }
+                    false
                 }
+            }
+            
+            if (shouldSkip) {
+                return
             }
 
             // ⭐ 使用 ignoreUnknownKeys = true 配置来忽略未知字段
@@ -1797,87 +1865,99 @@ class ChatViewModel @Inject constructor(
             Log.d("ChatViewModel", "type=${response.type}, message=${response.message}")
             Log.d("ChatViewModel", "data=${response.data}")
             
-            // ⭐ 特殊处理：图片识别响应（支持 type=image_recognition）
-            val isImageRecognition = response.type?.uppercase() == "IMAGE_RECOGNITION" ||
-                                     response.type?.uppercase() == "IMAGE"
+            // ⭐ 统一图片识别消息类型检测（支持所有可能的类型）
+            val isImageRecognitionType = response.type?.uppercase().let { type ->
+                type == "IMAGE" || 
+                type == "IMAGE_RECOGNITION" || 
+                type == "IMAGE_RESULT" ||
+                type == "IMAGE_SEARCH"
+            }
             
             when {
-                isImageRecognition -> {
-                    // ⭐ 处理图片识别响应
-                    Log.d("ChatViewModel", "=== 收到图片识别响应 ===")
-                    Log.d("ChatViewModel", "type=${response.type}, success=${response.success}, message=${response.message}")
+                isImageRecognitionType -> {
+                    // ⭐ 统一处理所有图片识别响应
+                    Log.d("ChatViewModel", "📸 === 收到图片识别响应 ===")
+                    Log.d("ChatViewModel", "type=${response.type}")
+                    Log.d("ChatViewModel", "success=${response.success}")
+                    Log.d("ChatViewModel", "message=${response.message}")
                     Log.d("ChatViewModel", "data=${response.data}")
                     
-                    // ⭐ 检查是否识别失败（优先检查 success 字段）
-                    val isSuccess = response.success == true
-                    val hasErrorMessage = response.message?.let { msg ->
-                        msg.contains("失败") || msg.contains("异常") || 
-                        msg.contains("Cannot invoke") || msg.contains("null pointer")
-                    } ?: false
+                    // ⭐ 第一步：尝试提取 POI 列表（用于地址识别场景）
+                    val places = extractPlaces(response, rawJson = json)
+                    val poiList = if (places.isNotEmpty()) {
+                        places
+                    } else {
+                        // 备选方案：从 data 字段提取
+                        extractPoiList(response.data)
+                    }
                     
-                    if (isSuccess && !hasErrorMessage) {
-                        // ⭐ 成功：解析 OCR 文本和 POI 列表
-                        val ocrText = response.message ?: ""
-                        Log.d("ChatViewModel", "OCR 文本: $ocrText")
+                    Log.d("ChatViewModel", "提取到 ${poiList.size} 个地点")
+                    
+                    if (poiList.isNotEmpty()) {
+                        // ✅ 场景1：找到地点 - 显示 POI 列表供用户选择
+                        _poiList.value = poiList
+                        _candidates.value = poiList
                         
-                        // ⭐ 解析 places 数组
-                        val places = extractPlaces(response, rawJson = json)
-                        val poiList = if (places.isNotEmpty()) {
-                            places
-                        } else {
-                            extractPoiList(response.data)
+                        val suggestions = poiList.take(3).map { it.name }
+                        
+                        // ⭐ 提取 OCR 文本（如果有）
+                        val ocrText = response.message?.takeIf { 
+                            it.isNotBlank() && it != "success" && !it.contains("失败")
                         }
                         
-                        if (poiList.isNotEmpty()) {
-                            Log.d("ChatViewModel", "✅ 找到 ${poiList.size} 个地点")
-                            _poiList.value = poiList
-                            _candidates.value = poiList
+                        // ⭐ 构建友好的回复消息
+                        val replyMessage = buildString {
+                            if (!ocrText.isNullOrBlank()) {
+                                append("📷 **图片识别结果：**\n")
+                                append("识别文字：$ocrText\n\n")
+                            }
                             
-                            val suggestions = poiList.take(3).map { it.name }
-                            val chatMessage = ChatMessage(
-                                id = UUID.randomUUID().toString(),
-                                content = response.message ?: "📷 识别成功，为您找到 ${poiList.size} 个地点",
-                                isUser = false,
-                                timestamp = System.currentTimeMillis(),
-                                suggestions = suggestions
-                            )
-                            _messages.value += chatMessage
+                            append("📍 找到 ${poiList.size} 个相关地点：\n\n")
+                            poiList.take(3).forEachIndexed { index, poi ->
+                                append("${index + 1}. **${poi.name}**\n")
+                                if (!poi.address.isNullOrBlank()) {
+                                    append("   🏠 地址：${poi.address}\n")
+                                }
+                                if (poi.distance != null) {
+                                    append("   📏 距离：${String.format("%.1f", poi.distance / 1000)}公里\n")
+                                }
+                                if (index < 2) append("\n")
+                            }
                             
-                            // ⭐ 弹出候选列表供用户选择
-                            Log.d("ChatViewModel", "🔔 弹出候选列表对话框")
-                            _showCandidatesDialog.value = true
-                        } else {
-                            // 未找到地址信息
-                            Log.w("ChatViewModel", "⚠️ 未从图片中识别到有效地址")
-                            addSystemMessage("😕 未能从图片中识别到有效地址信息")
-                            if (ocrText.isNotBlank() && ocrText != "success" && !ocrText.contains("失败")) {
-                                addSystemMessage("💡 识别到文字：$ocrText")
+                            if (poiList.size > 3) {
+                                append("\n💡 还有 ${poiList.size - 3} 个结果，请点击查看详情")
                             }
                         }
-                    } else {
-                        // ⭐ 失败：显示错误消息
-                        Log.e("ChatViewModel", "❌ 图片识别失败: ${response.message}")
                         
-                        // ⭐ 友好的错误提示（对齐后端文档 FAQ）
-                        val errorMsg = when {
-                            response.message?.contains("系统繁忙") == true || 
-                            response.message?.contains("EXCEEDED") == true ->
-                                "⚠️ 系统繁忙，请稍后再试（可能触发了频率限制）"
-                            response.message?.contains("图片大小") == true ->
-                                "⚠️ 图片太大，请重新选择"
-                            response.message?.contains("不支持的图片格式") == true ->
-                                "⚠️ 仅支持 JPEG/PNG/BMP 格式"
-                            response.message?.contains("未能从图片中识别") == true ->
-                                "😕 未识别到地址，请拍摄清晰的招牌或路牌"
-                            response.message?.contains("Cannot invoke") == true ||
-                            response.message?.contains("null") == true ->
-                                "❌ 后端服务异常，请稍后再试"
-                            response.message?.contains("图片识别失败") == true ->
-                                "❌ 图片识别失败，请稍后再试或重新拍摄"
-                            else -> "❌ ${response.message ?: "图片识别失败，请重新拍摄"}"
-                        }
-                        addSystemMessage(errorMsg)
+                        val chatMessage = ChatMessage(
+                            id = UUID.randomUUID().toString(),
+                            content = replyMessage,
+                            isUser = false,
+                            timestamp = System.currentTimeMillis(),
+                            suggestions = suggestions
+                        )
+                        _messages.value += chatMessage
+                        
+                        // ⭐ 弹出候选列表对话框供用户选择
+                        Log.d("ChatViewModel", "🔔 弹出候选列表对话框，共 ${poiList.size} 个地点")
+                        _showCandidatesDialog.value = true
+                        
+                        // ⭐ 语音播报
+                        speak("找到 ${poiList.size} 个相关地点")
+                        return  // ⭐ 重要：显示地点后直接返回
                     }
+                    
+                    // ✅ 场景2：没有地点，但有 AI 智能回复（聊天/描述/问答）
+                    if (!response.message.isNullOrBlank()) {
+                        // ⭐ 关键修复：直接显示后端 AI 的回复（支持多功能：聊天、描述、问答等）
+                        Log.d("ChatViewModel", "✅ 显示后端 AI 智能回复：${response.message}")
+                        addSystemMessage(response.message)
+                        return  // ⭐ 重要：显示后直接返回
+                    }
+                    
+                    // ⚠️ 场景3：既没有地点也没有 AI 回复 - 显示默认提示
+                    Log.w("ChatViewModel", "⚠️ 未从图片中识别到有效信息")
+                    addSystemMessage("😕 未能识别图片内容，请尝试拍摄更清晰的图片")
                 }
                                 
                 response.type?.uppercase() == "SEARCH" ||
@@ -1915,101 +1995,33 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 
-                // ⭐ 新增：处理图片识别结果（image_result）
-                response.type?.uppercase() == "IMAGE_RESULT" ||
-                response.type?.uppercase() == "IMAGE_RECOGNITION" -> {
-                    Log.d("ChatViewModel", "📸 收到 IMAGE_RESULT/IMAGE_RECOGNITION 类型消息")
-                    Log.d("ChatViewModel", "message=${response.message}")
-                    Log.d("ChatViewModel", "data=${response.data}")
-                    
-                    // ⭐ 提取 OCR 文本
-                    val ocrText = response.data?.let { dataObj ->
-                        try {
-                            val jsonObj = JSONObject(dataObj.toString())
-                            jsonObj.optString("ocrText", null)
-                        } catch (e: Exception) {
-                            Log.e("ChatViewModel", "❌ 提取 OCR 文本失败", e)
-                            null
-                        }
-                    }
-                    
-                    // ⭐ 提取地点列表
-                    val places = extractPlaces(response, rawJson = json)
-                    val poiList = if (places.isNotEmpty()) {
-                        places
-                    } else {
-                        extractPoiList(response.data)
-                    }
-                    
-                    // ⭐ 构建回复消息
-                    val replyMessage = buildString {
-                        if (!ocrText.isNullOrBlank()) {
-                            append("📷 **图片识别结果：**\n")
-                            append("识别文字：$ocrText\n\n")
-                        }
-                        
-                        if (!response.message.isNullOrBlank()) {
-                            append("${response.message}\n\n")
-                        }
-                        
-                        if (poiList.isNotEmpty()) {
-                            append("📍 找到 ${poiList.size} 个相关地点：\n\n")
-                            poiList.take(3).forEachIndexed { index, poi ->
-                                append("${index + 1}. **${poi.name}**\n")
-                                if (!poi.address.isNullOrBlank()) {
-                                    append("   🏠 地址：${poi.address}\n")
-                                }
-                                if (poi.distance != null) {
-                                    append("   📏 距离：${String.format("%.1f", poi.distance / 1000)}公里\n")
-                                }
-                                if (index < 2) append("\n")
-                            }
-                            
-                            if (poiList.size > 3) {
-                                append("\n💡 还有 ${poiList.size - 3} 个结果，请点击查看详情")
-                            }
-                        } else {
-                            append("💡 您可以：\n")
-                            append("• 点击输入框上方的地点名称直接下单\n")
-                            append("• 或者继续提问，我会帮您查找")
-                        }
-                    }
-                    
-                    // ⭐ 显示消息
-                    val chatMessage = ChatMessage(
-                        id = UUID.randomUUID().toString(),
-                        content = replyMessage,
-                        isUser = false,
-                        timestamp = System.currentTimeMillis(),
-                        suggestions = poiList.take(3).map { it.name }
-                    )
-                    _messages.value += chatMessage
-                    
-                    // ⭐ 更新 POI 列表和候选列表
-                    if (poiList.isNotEmpty()) {
-                        _poiList.value = poiList
-                        _candidates.value = poiList
-                        
-                        // ⭐ 修复：图片识别有多个结果时，始终弹出候选列表对话框供用户选择
-                        Log.d("ChatViewModel", "🔔 图片识别结果：${poiList.size} 个地点，弹出候选列表对话框")
-                        _showCandidatesDialog.value = true
-                    }
-                    
-                    // ⭐ 语音播报
-                    speak(if (poiList.isNotEmpty()) "找到 ${poiList.size} 个相关地点" else "识别完成")
-                }
+
                 
                 response.type?.uppercase() == "CHAT" -> {
                     // ⭐ AI 聊天回复
-                    if (!response.message.isNullOrBlank()) {
+                    Log.d("ChatViewModel", "=== 收到 CHAT 类型消息 ===")
+                    Log.d("ChatViewModel", "response.message=${response.message}")
+                    Log.d("ChatViewModel", "response.data=${response.data}")
+                    
+                    // ⭐ 优先使用 message 字段，如果为空则尝试从 data 中提取
+                    val content = if (!response.message.isNullOrBlank()) {
+                        response.message
+                    } else if (response.data != null) {
+                        // 尝试从 data 中提取文本内容
+                        response.data.toString()
+                    } else {
+                        null
+                    }
+                    
+                    if (!content.isNullOrBlank()) {
                         // ⭐ 新增：检测是否是沉默提示消息（重复内容不显示）
-                        val isSilencePrompt = response.message.contains("我可以帮你找") ||
-                                response.message.contains("请告诉我目的地")
+                        val isSilencePrompt = content.contains("我可以帮你找") ||
+                                content.contains("请告诉我目的地")
                 
                         if (isSilencePrompt) {
                             // 检查最近一条消息是否相同
                             val lastMessage = _messages.value.lastOrNull()
-                            if (lastMessage?.content == response.message) {
+                            if (lastMessage?.content == content) {
                                 Log.d("ChatViewModel", "⚠️ 检测到重复的沉默提示，已跳过")
                                 return  // 不显示重复的提示
                             }
@@ -2017,11 +2029,14 @@ class ChatViewModel @Inject constructor(
                 
                         val chatMessage = ChatMessage(
                             id = UUID.randomUUID().toString(),
-                            content = response.message,
+                            content = content,
                             isUser = false,
                             timestamp = System.currentTimeMillis()
                         )
                         _messages.value += chatMessage
+                        Log.d("ChatViewModel", "✅ 已显示 AI 回复: ${content.take(50)}...")
+                    } else {
+                        Log.w("ChatViewModel", "⚠️ CHAT 消息内容为空，message=${response.message}, data=${response.data}")
                     }
                 }
                 
@@ -2104,6 +2119,7 @@ class ChatViewModel @Inject constructor(
                 response.type?.uppercase() == "FAVORITE_SHARED" ||
                 response.type?.uppercase() == "NEW_ORDER" ||
                 response.type?.uppercase() == "ORDER_CREATED" ||
+                response.type?.uppercase() == "PROXY_ORDER_CREATED" ||  // ⭐ 新增：亲友端代叫车创建通知
                 response.type?.uppercase() == "CHAT_MESSAGE" ||
                 response.type?.uppercase() == "ORDER_ACCEPTED" ||
                 response.type?.uppercase() == "PROXY_ORDER_CONFIRMED" -> {
@@ -2116,6 +2132,10 @@ class ChatViewModel @Inject constructor(
                 else -> {
                     // ⭐ 其他类型消息（如 ping 响应、未知类型等）
                     // 仅在 message 非空且不是心跳响应时显示
+                    Log.d("ChatViewModel", "📩 收到未知类型消息: type=${response.type}")
+                    Log.d("ChatViewModel", "message=${response.message}")
+                    Log.d("ChatViewModel", "data=${response.data}")
+                    
                     if (!response.message.isNullOrBlank() &&
                         response.type?.lowercase() != "pong"
                     ) {
@@ -2126,6 +2146,11 @@ class ChatViewModel @Inject constructor(
                             timestamp = System.currentTimeMillis()
                         )
                         _messages.value += chatMessage
+                        Log.d("ChatViewModel", "✅ 已显示未知类型消息")
+                    } else if (response.type?.lowercase() == "pong") {
+                        Log.d("ChatViewModel", "💓 收到 pong 心跳响应，跳过显示")
+                    } else {
+                        Log.w("ChatViewModel", "⚠️ 消息内容为空，跳过显示")
                     }
                 }
             }
@@ -2689,7 +2714,7 @@ class ChatViewModel @Inject constructor(
                 
                 when (pushMessage.type) {
                     "NEW_ORDER", "ORDER_CREATED" -> {  // ⭐ 修复：兼容两种消息类型
-                        // ⭐ 代叫车请求通知
+                        // ⭐ 代叫车请求通知（长辈端）
                         Log.d("ChatViewModel", "🚗 收到代叫车请求：orderId=${pushMessage.orderId}, requester=${pushMessage.proxyUserName}, dest=${pushMessage.destAddress}")
                         
                         // ⭐ 关键修复：更新 sharedLocation 中的 orderId
@@ -2728,17 +2753,22 @@ class ChatViewModel @Inject constructor(
                             Log.d("ChatViewModel", "✅ 已发送全局代叫车请求事件")
                         }
                         
-                        // ⭐ 新增：如果是长辈端，也需要更新 sharedLocation（用于卡片显示）
-                        if (_isElderMode.value) {
-                            Log.d("ChatViewModel", "👴 长辈端收到 NEW_ORDER，更新 sharedLocation")
+                        // ⭐ 关键修复：亲友端和长辈端都需要更新 sharedLocation（用于卡片显示）
+                        // ⭐ 从 pushMessage.userId 获取长辈ID（后端返回的字段）
+                        val elderId = pushMessage.userId ?: com.example.myapplication.MyApplication.tokenManager.getUserId() ?: 0L
+                        
+                        // ⭐ 检查是否已有 sharedLocation
+                        val currentSharedLocationForCreate = _sharedLocation.value
+                        if (currentSharedLocationForCreate != null && currentSharedLocationForCreate.orderId == pushMessage.orderId) {
+                            // 已有 sharedLocation，只更新状态
+                            Log.d("ChatViewModel", "⏭️ sharedLocation 已存在，跳过创建")
+                        } else {
+                            // 创建新的 sharedLocation
+                            Log.d("ChatViewModel", "📍 创建 sharedLocation - isElderMode=${_isElderMode.value}, elderId=$elderId")
                             
-                            // ⭐ 关键修复：从 pushMessage.userId 获取长辈ID（后端返回的字段）
-                            val elderId = pushMessage.userId ?: com.example.myapplication.MyApplication.tokenManager.getUserId() ?: 0L
-                            
-                            // ⭐ 关键修复：创建 SharedLocationInfo 并更新 StateFlow
                             val sharedInfo = SharedLocationInfo(
                                 elderId = elderId,
-                                elderName = pushMessage.proxyUserName ?: "亲友",
+                                elderName = if (_isElderMode.value) "我" else (pushMessage.proxyUserName ?: "亲友"),
                                 favoriteName = pushMessage.poiName ?: pushMessage.destAddress ?: "未知目的地",
                                 favoriteAddress = pushMessage.destAddress ?: "",
                                 latitude = pushMessage.destLat ?: 0.0,
@@ -2751,22 +2781,14 @@ class ChatViewModel @Inject constructor(
                             )
                             _sharedLocation.value = sharedInfo
                             
-                            Log.d("ChatViewModel", "✅ [长辈端] sharedLocation 已更新：orderId=${pushMessage.orderId}")
-                            Log.d("ChatViewModel", "✅ [长辈端] 目的地：${sharedInfo.favoriteName}")
-                            Log.d("ChatViewModel", "✅ [长辈端] 起点：lat=${sharedInfo.elderCurrentLat}, lng=${sharedInfo.elderCurrentLng}")
-                            
-                            // ⭐ 关键修复：发送 orderCreatedEvent，确保其他组件也能收到通知
-                            viewModelScope.launch {
-                                val elderId = sharedInfo.elderId
-                                val orderId = pushMessage.orderId ?: 0L
-                                MyApplication.sendOrderCreatedEvent(orderId, elderId)
-                                Log.d("ChatViewModel", "📤 [长辈端] 已发送 orderCreatedEvent: orderId=$orderId, elderId=$elderId")
-                            }
+                            Log.d("ChatViewModel", "✅ sharedLocation 已更新：orderId=${pushMessage.orderId}, elderId=$elderId")
+                            Log.d("ChatViewModel", "✅ 目的地：${sharedInfo.favoriteName}")
+                            Log.d("ChatViewModel", "✅ 起点：lat=${sharedInfo.elderCurrentLat}, lng=${sharedInfo.elderCurrentLng}")
                             
                             // ⭐ 持久化保存
                             viewModelScope.launch {
                                 try {
-                                    Log.d("ChatViewModel", "💾 [长辈端] 开始持久化保存...")
+                                    Log.d("ChatViewModel", "💾 开始持久化保存...")
                                     val prefs = MyApplication.instance.getSharedPreferences("shared_location_cache", android.content.Context.MODE_PRIVATE)
                                     
                                     prefs.edit()
@@ -2778,7 +2800,7 @@ class ChatViewModel @Inject constructor(
                                         .putFloat("longitude_${sharedInfo.elderId}", sharedInfo.longitude.toFloat())
                                         .apply()
                                     
-                                    Log.d("ChatViewModel", "💾 [长辈端] 基本信息保存成功")
+                                    Log.d("ChatViewModel", "💾 基本信息保存成功")
                                     
                                     if (sharedInfo.elderCurrentLat != null && sharedInfo.elderCurrentLng != null) {
                                         prefs.edit()
@@ -2787,18 +2809,76 @@ class ChatViewModel @Inject constructor(
                                             .putLong("elderLocationTimestamp_${sharedInfo.elderId}", sharedInfo.elderLocationTimestamp ?: 0L)
                                             .putLong("orderId_${sharedInfo.elderId}", sharedInfo.orderId ?: 0L)
                                             .apply()
-                                        Log.d("ChatViewModel", "💾 [长辈端] 长辈位置和 orderId 保存成功")
+                                        Log.d("ChatViewModel", "💾 长辈位置和 orderId 保存成功")
                                     }
                                     
-                                    // ⭐ 验证保存结果
-                                    val verifyPrefs = MyApplication.instance.getSharedPreferences("shared_location_cache", android.content.Context.MODE_PRIVATE)
-                                    val allKeys = verifyPrefs.all.keys
-                                    Log.d("ChatViewModel", "💾 [长辈端] 验证：SharedPreferences 中共有 ${allKeys.size} 个键")
-                                    Log.d("ChatViewModel", "💾 [长辈端] 验证：所有键 = $allKeys")
-                                    
-                                    Log.d("ChatViewModel", "✅ [长辈端] 已持久化保存 sharedLocation")
+                                    Log.d("ChatViewModel", "✅ 已持久化保存 sharedLocation")
                                 } catch (e: Exception) {
-                                    Log.e("ChatViewModel", "❌ [长辈端] 持久化失败", e)
+                                    Log.e("ChatViewModel", "❌ 持久化失败", e)
+                                }
+                            }
+                        }
+                    }
+                    
+                    "PROXY_ORDER_CREATED" -> {
+                        // ⭐ 新增：亲友端收到的代叫车创建通知（只读状态卡片）
+                        Log.d("ChatViewModel", "👨‍👩‍👧 亲友端收到代叫车创建通知：orderId=${pushMessage.orderId}, elderId=${pushMessage.userId}")
+                        
+                        // ⭐ 从 pushMessage.userId 获取长辈ID
+                        val elderId = pushMessage.userId ?: com.example.myapplication.MyApplication.tokenManager.getUserId() ?: 0L
+                        
+                        // ⭐ 检查是否已有 sharedLocation
+                        val currentSharedLocation = _sharedLocation.value
+                        if (currentSharedLocation != null && currentSharedLocation.orderId == pushMessage.orderId) {
+                            // 已有 sharedLocation，只更新状态
+                            Log.d("ChatViewModel", "⏭️ sharedLocation 已存在，跳过创建")
+                        } else {
+                            // 创建新的 sharedLocation（亲友端视角）
+                            Log.d("ChatViewModel", "📍 [亲友端] 创建 sharedLocation - elderId=$elderId")
+                            
+                            val sharedInfo = SharedLocationInfo(
+                                elderId = elderId,
+                                elderName = pushMessage.proxyUserName ?: "长辈",  // 亲友端显示长辈名称
+                                favoriteName = pushMessage.poiName ?: pushMessage.destAddress ?: "未知目的地",
+                                favoriteAddress = pushMessage.destAddress ?: "",
+                                latitude = pushMessage.destLat ?: 0.0,
+                                longitude = pushMessage.destLng ?: 0.0,
+                                elderCurrentLat = pushMessage.startLat,  // 长辈当前位置
+                                elderCurrentLng = pushMessage.startLng,
+                                elderLocationTimestamp = System.currentTimeMillis(),
+                                orderId = pushMessage.orderId,
+                                orderStatus = 0  // 0-待长辈确认
+                            )
+                            _sharedLocation.value = sharedInfo
+                            
+                            Log.d("ChatViewModel", "✅ [亲友端] sharedLocation 已创建：orderId=${pushMessage.orderId}, elderId=$elderId")
+                            Log.d("ChatViewModel", "✅ [亲友端] 目的地：${sharedInfo.favoriteName}")
+                            
+                            // ⭐ 持久化保存
+                            viewModelScope.launch {
+                                try {
+                                    val prefs = MyApplication.instance.getSharedPreferences("shared_location_cache", android.content.Context.MODE_PRIVATE)
+                                    prefs.edit()
+                                        .putLong("elderId_${sharedInfo.elderId}", sharedInfo.elderId)
+                                        .putString("elderName_${sharedInfo.elderId}", sharedInfo.elderName)
+                                        .putString("favoriteName_${sharedInfo.elderId}", sharedInfo.favoriteName)
+                                        .putString("favoriteAddress_${sharedInfo.elderId}", sharedInfo.favoriteAddress)
+                                        .putFloat("latitude_${sharedInfo.elderId}", sharedInfo.latitude.toFloat())
+                                        .putFloat("longitude_${sharedInfo.elderId}", sharedInfo.longitude.toFloat())
+                                        .apply()
+                                    
+                                    if (sharedInfo.elderCurrentLat != null && sharedInfo.elderCurrentLng != null) {
+                                        prefs.edit()
+                                            .putFloat("elderCurrentLat_${sharedInfo.elderId}", sharedInfo.elderCurrentLat.toFloat())
+                                            .putFloat("elderCurrentLng_${sharedInfo.elderId}", sharedInfo.elderCurrentLng.toFloat())
+                                            .putLong("elderLocationTimestamp_${sharedInfo.elderId}", sharedInfo.elderLocationTimestamp ?: 0L)
+                                            .putLong("orderId_${sharedInfo.elderId}", sharedInfo.orderId ?: 0L)
+                                            .apply()
+                                    }
+                                    
+                                    Log.d("ChatViewModel", "✅ [亲友端] 已持久化保存 sharedLocation")
+                                } catch (e: Exception) {
+                                    Log.e("ChatViewModel", "❌ [亲友端] 持久化失败", e)
                                 }
                             }
                         }
@@ -2808,6 +2888,9 @@ class ChatViewModel @Inject constructor(
                         // ⭐ 新增：长辈同意代叫车请求
                         val orderId = pushMessage.orderId
                         Log.d("ChatViewModel", "✅ 收到订单确认消息：type=${pushMessage.type}, orderId=$orderId")
+                        
+                        // ⭐ 关键修复：优先使用 userId，兼容 elderUserId
+                        val elderId = pushMessage.userId ?: pushMessage.elderUserId ?: com.example.myapplication.MyApplication.tokenManager.getUserId() ?: 0L
                         
                         // ⭐ 关键修复：如果是长辈端，需要创建 sharedLocation 并持久化
                         if (_isElderMode.value && orderId != null) {
@@ -2827,8 +2910,6 @@ class ChatViewModel @Inject constructor(
                                 // 没有 sharedLocation，创建一个基本的（用于显示卡片）
                                 Log.w("ChatViewModel", "⚠️ 未找到 sharedLocation，创建基本记录")
                                 
-                                // ⭐ 关键修复：从 pushMessage.userId 获取长辈ID
-                                val elderId = pushMessage.userId ?: com.example.myapplication.MyApplication.tokenManager.getUserId() ?: 0L
                                 val elderName = "我"
                                 
                                 val sharedInfo = SharedLocationInfo(
@@ -2864,16 +2945,31 @@ class ChatViewModel @Inject constructor(
                                 }
                             }
                         } else {
-                            // 亲友端：只更新状态
+                            // ⭐ 关键修复：亲友端也需要持久化保存订单状态
                             val currentSharedLocation = _sharedLocation.value
                             if (currentSharedLocation != null && currentSharedLocation.orderId == orderId) {
                                 val updatedLocation = currentSharedLocation.copy(
                                     orderStatus = 1  // 1-已同意
                                 )
                                 _sharedLocation.value = updatedLocation
-                                Log.d("ChatViewModel", "✅ 已更新订单状态为：已同意")
+                                Log.d("ChatViewModel", "✅ [亲友端] 已更新订单状态为：已同意")
+                                
+                                // ⭐ 关键修复：持久化保存订单状态到 SharedPreferences
+                                viewModelScope.launch {
+                                    try {
+                                        val prefs = MyApplication.instance.getSharedPreferences("shared_location_cache", android.content.Context.MODE_PRIVATE)
+                                        prefs.edit()
+                                            .putLong("orderId_${elderId}", orderId ?: 0L)  // ⭐ 关键：保存 orderId
+                                            .putInt("orderStatus_${elderId}", 1)  // ⭐ 关键修复：保存 orderStatus（1-已同意）
+                                            .apply()
+                                        Log.d("ChatViewModel", "💾 [亲友端] 已持久化保存订单状态（orderId=$orderId, orderStatus=1）")
+                                    } catch (e: Exception) {
+                                        Log.e("ChatViewModel", "❌ [亲友端] 持久化失败", e)
+                                    }
+                                }
                             } else {
-                                Log.w("ChatViewModel", "⚠️ 未找到对应的 sharedLocation，orderId=$orderId")
+                                // ⭐ 修复：亲友端可能没有 sharedLocation，这是正常的
+                                Log.d("ChatViewModel", "⏭️ 亲友端未设置 sharedLocation（正常），orderId=$orderId")
                             }
                         }
                         
@@ -2896,6 +2992,67 @@ class ChatViewModel @Inject constructor(
                         
                         // TODO: 如果当前在订单追踪页面，可以显示聊天消息
                         // 目前先记录日志
+                    }
+                    
+                    "TRIP_COMPLETED" -> {
+                        // ⭐ 新增：行程完成，更新卡片状态为"已结束"
+                        val orderId = pushMessage.orderId
+                        val finalAmount = pushMessage.finalAmount
+                        Log.d("ChatViewModel", "🏁 收到行程完成消息：orderId=$orderId, amount=$finalAmount, userId=${pushMessage.userId}, elderUserId=${pushMessage.elderUserId}")
+                                            
+                        // ⭐ 关键修复：优先使用 userId，兼容 elderUserId
+                        val currentUserId = com.example.myapplication.MyApplication.tokenManager.getUserId()
+                        val elderId = pushMessage.userId ?: pushMessage.elderUserId ?: currentUserId ?: 0L
+                                            
+                        val currentSharedLocation = _sharedLocation.value
+                                            
+                        // ⭐ 关键修复：放宽匹配条件，只要是当前会话的订单就更新
+                        val shouldUpdate = if (currentSharedLocation != null) {
+                            // 1. 如果有 orderId，必须匹配
+                            // 2. 如果是当前用户（长辈），也应该更新
+                            val orderIdMatch = currentSharedLocation.orderId == orderId
+                            val isElderUser = elderId == currentUserId && currentSharedLocation.elderId == elderId
+                            Log.d("ChatViewModel", "🔍 [TRIP_COMPLETED] orderIdMatch=$orderIdMatch, isElderUser=$isElderUser, currentOrderId=${currentSharedLocation.orderId}, incomingOrderId=$orderId")
+                            orderIdMatch || isElderUser
+                        } else {
+                            false
+                        }
+                                            
+                        if (shouldUpdate) {
+                            Log.d("ChatViewModel", "✅ [TRIP_COMPLETED] 开始更新订单状态为：已结束 (3)")
+                                                
+                            // 更新状态为已结束 (3)
+                            val updatedLocation = currentSharedLocation!!.copy(
+                                orderStatus = 3  // 3-已结束
+                            )
+                            _sharedLocation.value = updatedLocation
+                            Log.d("ChatViewModel", "✅ 已更新订单状态为：已结束 (3)")
+                                                
+                            // ⭐ 持久化保存
+                            viewModelScope.launch {
+                                try {
+                                    val prefs = MyApplication.instance.getSharedPreferences("shared_location_cache", android.content.Context.MODE_PRIVATE)
+                                    prefs.edit()
+                                        .putLong("orderId_${elderId}", orderId ?: 0L)
+                                        .putInt("orderStatus_${elderId}", 3)
+                                        .apply()
+                                    Log.d("ChatViewModel", "💾 已持久化保存订单完成状态")
+                                } catch (e: Exception) {
+                                    Log.e("ChatViewModel", "❌ 持久化保存失败", e)
+                                }
+                            }
+                                                
+                            // ⭐ 新增：在私聊界面添加一条"行程已结束"的系统消息，实现"固态化"记录
+                            val summaryMessage = if (finalAmount != null) {
+                                "🏁 **行程已完成**\n💰 最终费用：¥${finalAmount}"
+                            } else {
+                                "🏁 **行程已完成**\n✅ 感谢您的使用！"
+                            }
+                            Log.d("ChatViewModel", "📝 [固态化] 添加系统消息：$summaryMessage")
+                            addSystemMessage(summaryMessage)
+                        } else {
+                            Log.w("ChatViewModel", "⚠️ [TRIP_COMPLETED] 不满足更新条件，跳过更新。currentSharedLocation=$currentSharedLocation")
+                        }
                     }
                     
                     "FAVORITE_SHARED" -> {
@@ -3097,6 +3254,32 @@ class ChatViewModel @Inject constructor(
      * ⭐ 新增：清除 sharedLocation，避免重复弹窗
      */
     fun clearSharedLocation() {
+        // ⭐ 关键修复：同时清除 SharedPreferences 缓存，避免返回时从缓存恢复
+        val currentLocation = _sharedLocation.value
+        if (currentLocation != null) {
+            try {
+                val prefs = MyApplication.instance.getSharedPreferences("shared_location_cache", android.content.Context.MODE_PRIVATE)
+                val elderId = currentLocation.elderId
+                
+                prefs.edit()
+                    .remove("elderId_$elderId")
+                    .remove("elderName_$elderId")
+                    .remove("favoriteName_$elderId")
+                    .remove("favoriteAddress_$elderId")
+                    .remove("latitude_$elderId")
+                    .remove("longitude_$elderId")
+                    .remove("elderCurrentLat_$elderId")
+                    .remove("elderCurrentLng_$elderId")
+                    .remove("elderLocationTimestamp_$elderId")
+                    .remove("orderId_$elderId")
+                    .apply()
+                
+                Log.d("ChatV🔍iewModel", "✅ 已清除 SharedPreferences 缓存（elderId=$elderId）")
+            } catch (e: Exception) {
+                Log.e("ChatViewModel", "❌ 清除 SharedPreferences 失败", e)
+            }
+        }
+        
         _sharedLocation.value = null
         Log.d("ChatViewModel", "✅ 已清除 sharedLocation")
     }

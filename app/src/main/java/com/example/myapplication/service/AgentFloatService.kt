@@ -145,7 +145,7 @@ class AgentFloatService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = 50
-            y = 162  // ⭐ 修复：上移1cm（200-38=162）
+            y = 124  // ⭐ 修复：再上移1cm（162-38=124）
         }
         layoutParams = wmParams
 

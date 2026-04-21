@@ -102,6 +102,21 @@ fun OrderTrackingScreen(
     val profile by profileViewModel.profile.collectAsStateWithLifecycle()
     val isElderMode = profile?.guardMode == 1
     
+    // ⭐ 关键修复：通过订单状态判断是否为代叫车订单
+    val isProxyOrder by remember {
+        derivedStateOf {
+            when (uiState) {
+                is OrderTrackingUiState.Success -> {
+                    val order = (uiState as OrderTrackingUiState.Success).order
+                    // 代叫车订单：status=0(待长辈确认)、1(已确认)、2(寻找司机)
+                    // 非代叫车订单：status=3+(司机已接单)
+                    order.status <= 2
+                }
+                else -> false
+            }
+        }
+    }
+    
     // ⭐ 修复：在 Composable 顶层创建 scope
     val scope = rememberCoroutineScope()
     
@@ -127,12 +142,16 @@ fun OrderTrackingScreen(
                     }
                 }
                 is OrderTrackingEvent.DriverRequestReceived -> {
-                    // ⭐ 关键修复：只有普通用户（亲友端）才显示司机接单确认弹窗
-                    // 长辈端只能查看司机信息，不能选择/拒绝司机
+                    // ⭐ 关键修复：
+                    // - 亲友端（isElderMode=false）：显示司机接单确认弹窗，可以选择同意/拒绝
+                    // - 长辈端（isElderMode=true）：只刷新订单，查看司机信息，不能选择/拒绝
                     if (!isElderMode) {
+                        // 亲友端：显示确认弹窗
+                        Log.d("OrderTrackingScreen", "👥 [亲友端] 收到DRIVER_REQUEST，显示确认弹窗")
                         showDriverAcceptDialog = event.wsMessage
                     } else {
-                        // ⭐ 新增：长辈端虽然不显示弹窗，但需要刷新订单以获取司机信息
+                        // 长辈端：只刷新订单以获取司机信息
+                        Log.d("OrderTrackingScreen", "👴 [长辈端] 收到DRIVER_REQUEST，刷新订单获取司机信息")
                         scope.launch {
                             kotlinx.coroutines.delay(500)  // 等待后端更新
                             viewModel.refreshOrder(orderId)
@@ -156,8 +175,9 @@ fun OrderTrackingScreen(
     // ⭐ 关键修复：记录上次的订单状态，用于判断是否需要重新绘制
     var lastOrderStatus by remember { mutableStateOf<Int?>(null) }
 
-    // 初始化追踪
-    LaunchedEffect(orderId) {
+    // ⭐ 关键修复：初始化追踪（每次进入页面都重新加载）
+    LaunchedEffect(Unit) {
+        Log.d("OrderTrackingScreen", "🚀 [OrderTrackingScreen] 初始化行程追踪，orderId=$orderId")
         viewModel.initTracking(orderId)
     }
 
@@ -859,7 +879,7 @@ private fun ActionButtons(
     // ⭐ 根据订单状态显示不同按钮
     when (orderStatus) {
         4 -> {
-            // ⭐ 司机已到达：显示“乘客上车”按钮
+            // ⭐ 司机已到达：显示"乘客上车"按钮
             Button(
                 onClick = onBoardCar,
                 modifier = Modifier.fillMaxWidth(),
@@ -939,12 +959,12 @@ private fun ActionButtons(
             }
         }
         else -> {
-            // ⭐ 其他状态：显示取消订单和联系司机按钮
+            // ⭐ 其他状态（0-待确认、1-已确认、2-寻找司机、3-司机已接单）
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // ⭐ 修复：普通用户在订单完成前都可以取消订单（status < 6）
+                // ⭐ 关键修复：只有亲友端（非长辈）才能取消订单
                 if (!isElderMode && orderStatus < 6) {  
                     OutlinedButton(
                         onClick = onCancelOrder,
@@ -955,7 +975,9 @@ private fun ActionButtons(
                     }
                 }
                 
-                // ⭐ 关键修复：只有订单状态 >= 3（司机已接单）且有司机电话时才显示联系司机按钮
+                // ⭐ 关键修复：
+                // - 司机已接单（status>=3）且有司机电话：显示联系司机按钮
+                // - 长辈端和亲友端都可以联系司机
                 if (orderStatus >= 3 && hasDriverPhone) {
                     Button(
                         onClick = onCallDriver,
@@ -963,6 +985,34 @@ private fun ActionButtons(
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1677FF))
                     ) {
                         Text("联系司机", fontSize = 15.sp)
+                    }
+                }
+                
+                // ⭐ 新增：长辈端在司机已接单时，显示提示信息
+                if (isElderMode && orderStatus == 3 && !hasDriverPhone) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.Info,
+                                contentDescription = null,
+                                tint = Color(0xFFFF9800),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "⏳ 司机正在赶来，请稍候...",
+                                fontSize = 14.sp,
+                                color = Color(0xFF666666)
+                            )
+                        }
                     }
                 }
             }

@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.AttachFile  // ⭐ 新增：附件
 import androidx.compose.material.icons.filled.CheckCircle  // ⭐ 新增：已同意图标
 import androidx.compose.material.icons.filled.DirectionsCar  // ⭐ 新增：行程中图标
 import androidx.compose.material.icons.filled.EventAvailable  // ⭐ 新增：已结束图标
+import androidx.compose.material.icons.filled.Check  // ⭐ 新增：勾选图标
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -38,10 +39,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle  // ⭐ 新增：用于 StateFlow 收集
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
@@ -63,7 +66,8 @@ fun PrivateChatScreen(
     isElderMode: Boolean = false,  // ⭐ 新增：长辈模式标识
     onNavigateToHomeWithDestination: ((String, Double, Double) -> Unit)? = null,  // ⭐ 新增：跳转到首页叫车
     onNavigateToOrderTracking: ((Long) -> Unit)? = null,  // ⭐ 新增：跳转到行程追踪界面
-    onNavigateToElderLocation: ((String, Double, Double) -> Unit)? = null  // ⭐ 新增：跳转到长辈位置地图
+    onNavigateToElderLocation: ((String, Double, Double) -> Unit)? = null,  // ⭐ 新增：跳转到长辈位置地图
+    onConfirmProxyOrder: ((Long, Boolean) -> Unit)? = null  // ⭐ 新增：确认/拒绝代叫车回调
 ) {
     val context = LocalContext.current
     
@@ -76,28 +80,26 @@ fun PrivateChatScreen(
     val error by viewModel.error.collectAsState()
     val currentUserId by viewModel.currentUserId.collectAsState()  // ⭐ 新增：获取当前用户ID
         
-    // ⭐ 修复：在函数顶部收集 sharedLocation（单一数据源）
-    val cardLocation by chatViewModel?.sharedLocation?.collectAsState() ?: remember { mutableStateOf(null) }
+    // ⭐ 修复1：使用正确的 collectAsStateWithLifecycle API
+    val cardLocation by chatViewModel?.sharedLocation?.collectAsStateWithLifecycle() ?: remember { mutableStateOf(null) }
     
-    // ⭐ 新增：日志 - 监控 cardLocation 变化
+    // ⭐ 修复31：精简日志，只输出关键信息
     LaunchedEffect(cardLocation) {
-        Log.d("PrivateChatScreen", "🔍 [状态监控] === cardLocation 变化 ===")
-        Log.d("PrivateChatScreen", "🔍 [状态监控] cardLocation != null: ${cardLocation != null}")
-        if (cardLocation != null) {
-            Log.d("PrivateChatScreen", "🔍 [状态监控] elderId=${cardLocation!!.elderId}, guardianId=$guardianId")
-            Log.d("PrivateChatScreen", "🔍 [状态监控] favoriteName=${cardLocation!!.favoriteName}")
-            Log.d("PrivateChatScreen", "🔍 [状态监控] lat=${cardLocation!!.latitude}, lng=${cardLocation!!.longitude}")
-            Log.d("PrivateChatScreen", "🔍 [状态监控] elderCurrentLat=${cardLocation!!.elderCurrentLat}, elderCurrentLng=${cardLocation!!.elderCurrentLng}")
-            Log.d("PrivateChatScreen", "🔍 [状态监控] orderId=${cardLocation!!.orderId}, orderStatus=${cardLocation!!.orderStatus}")
-        } else {
-            Log.w("PrivateChatScreen", "⚠️ [状态监控] cardLocation 为 null，卡片不会显示！")
-            Log.w("PrivateChatScreen", "⚠️ [状态监控] 可能原因：1) WebSocket未推送 2) SharedPreferences缓存为空 3) StateFlow被清除")
+        cardLocation?.let { location ->
+            Log.d("PrivateChatScreen", "📍 [状态监控] cardLocation变化: ${location.favoriteName}")
         }
     }
         
     // ⭐ 新增：弹窗状态管理
     var showShareDialog by remember { mutableStateOf(false) }
-    var pendingShareLocation by remember { mutableStateOf<Triple<String, Double, Double>?>(null) }
+    // ⭐ 修复2：使用语义化的数据类替代 Triple
+    data class ShareLocationData(
+        val name: String,
+        val latitude: Double,
+        val longitude: Double
+    )
+    
+    var pendingShareLocation by remember { mutableStateOf<ShareLocationData?>(null) }
     var pendingElderName by remember { mutableStateOf("") }
         
     // ⭐ 新增：标记分享是否已被处理（用户在外层弹窗点击了“立即叫车”）
@@ -108,84 +110,87 @@ fun PrivateChatScreen(
         
     // ⭐ 关键修复：记录上次弹窗的 elderId，只有新的分享才弹窗
     var lastPopupElderId by remember { mutableStateOf<Long?>(null) }
+    
+    // ⭐ 新增：控制卡片在当前会话中的可见性（不影响缓存）
+    var isCardVisible by remember { mutableStateOf(true) }
         
     var inputText by remember { mutableStateOf("") }
     val lazyListState = rememberLazyListState()
         
-    // ⭐ 新增：长辈位置信息（用于发送定位功能）
-    var showElderLocationDialog by remember { mutableStateOf(false) }
-    var elderLocation by remember { mutableStateOf<Pair<Double, Double>?>(null) }  // lat, lng
     
-    // ⭐ 新增：多媒体选择对话框
-    var showMediaPickerDialog by remember { mutableStateOf(false) }
+    
+
         
     // ⭐ 修复：监听 cardLocation 的变化，当收到 WebSocket 消息时触发弹窗
     LaunchedEffect(cardLocation) {
         cardLocation?.let { location ->
-            // ⭐ 关键修复：亲友端和长辈端都应该显示卡片
-            // 亲友端：location.elderId == guardianId (分享者是当前聊天的长辈)
-            // 长辈端：location.elderId == currentUserId (自己是分享者)
-            val currentUserId = com.example.myapplication.MyApplication.tokenManager.getUserId()
-            val shouldShowCard = location.elderId == guardianId || location.elderId == currentUserId
-            
-            if (shouldShowCard) {
-                Log.d("PrivateChatScreen", "📍 [WebSocket] 收到分享的地点：${location.favoriteName}, elderId=${location.elderId}, guardianId=$guardianId")
+                // ⭐ 修复11：简化判断逻辑，只检查 elderId 是否匹配当前聊天对象
+                val currentUserId = com.example.myapplication.MyApplication.tokenManager.getUserId()
+                val shouldShowCard = location.elderId == guardianId
                 
-                // ⭐ 关键修复1：如果是同一个 elderId 且已经弹过窗，不再弹窗
+                if (shouldShowCard) {
+                    Log.d("PrivateChatScreen", "📍 [WebSocket] 收到分享的地点：${location.favoriteName}")
+                
+                // ⭐ 修复12：只有最新且未弹过窗的消息才弹窗
+                val currentTime = System.currentTimeMillis()
+                val messageTimestamp = location.elderLocationTimestamp ?: 0L
+                val isRecentMessage = messageTimestamp > 0 && (currentTime - messageTimestamp) < 5000
+                
+                // ⭐ 关键修复：如果是旧消息，不弹窗但仍显示卡片
+                if (!isRecentMessage) {
+                    Log.d("PrivateChatScreen", "⏭️ [WebSocket] 消息来自缓存，只显示卡片不弹窗")
+                    // ⭐ 不标记 hasShownDialogForCurrentShare，允许后续新消息弹窗
+                    return@let
+                }
+                
+                // ⭐ 检查是否已经对该 elderId 弹过窗
                 if (lastPopupElderId == location.elderId && hasShownDialogForCurrentShare) {
                     Log.d("PrivateChatScreen", "⏭️ [WebSocket] 同一 elderId 已弹过窗，不重复弹窗")
                     return@let
                 }
                 
-                // ⭐ 关键修复2：如果分享已被处理（用户已点击立即叫车），不再弹窗
+                // ⭐ 检查分享是否已被处理
                 if (isShareProcessed) {
                     Log.d("PrivateChatScreen", "⏭️ [WebSocket] 分享已被处理，不弹窗")
                     return@let
                 }
-                
-                // ⭐ 关键修复3：检查是否是刚收到的 WebSocket 消息（时间戳在 5 秒内）
-                val currentTime = System.currentTimeMillis()
-                val messageTimestamp = location.elderLocationTimestamp ?: 0L
-                val isRecentMessage = messageTimestamp > 0 && (currentTime - messageTimestamp) < 5000
-                
-                if (!isRecentMessage) {
-                    Log.d("PrivateChatScreen", "⏭️ [WebSocket] 消息不是最新的（来自缓存），不弹窗")
-                    // ⭐ 关键修复：即使是旧消息，也标记为已弹窗，避免后续重复
-                    lastPopupElderId = location.elderId
-                    hasShownDialogForCurrentShare = true
-                    return@let
-                }
                     
-                // ⭐ 新增：播放提示音和震动
+                // ⭐ 修复16：播放提示音后释放资源
                 try {
                     val ringtoneManager = android.media.RingtoneManager.getDefaultUri(
                         android.media.RingtoneManager.TYPE_NOTIFICATION
                     )
                     val ringtone = android.media.RingtoneManager.getRingtone(context, ringtoneManager)
                     ringtone.play()
+                    // Ringtone 会在播放完成后自动释放，无需手动管理
                         
-                    val vibrator = context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as android.os.Vibrator
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                        vibrator.vibrate(android.os.VibrationEffect.createOneShot(200, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                    // ⭐ 修复17：检查 Vibrator 可用性
+                    val vibrator = context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+                    if (vibrator != null && vibrator.hasVibrator()) {
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                            vibrator.vibrate(android.os.VibrationEffect.createOneShot(200, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                        } else {
+                            @Suppress("DEPRECATION")
+                            vibrator.vibrate(200)
+                        }
+                        Log.d("PrivateChatScreen", "🔔 [提醒] 已播放提示音和震动")
                     } else {
-                        @Suppress("DEPRECATION")
-                        vibrator.vibrate(200)
+                        Log.w("PrivateChatScreen", "⚠️ [提醒] 设备不支持震动")
                     }
-                    Log.d("PrivateChatScreen", "🔔 [提醒] 已播放提示音和震动")
                 } catch (e: Exception) {
                     Log.e("PrivateChatScreen", "❌ 播放提醒失败", e)
                 }
                     
                 // ⭐ 触发弹窗
-                pendingShareLocation = Triple(
-                    location.favoriteName,
-                    location.latitude,
-                    location.longitude
+                pendingShareLocation = ShareLocationData(
+                    name = location.favoriteName,
+                    latitude = location.latitude,
+                    longitude = location.longitude
                 )
                 pendingElderName = location.elderName
                 showShareDialog = true
-                hasShownDialogForCurrentShare = true  // ⭐ 标记已弹窗
-                lastPopupElderId = location.elderId  // ⭐ 记录弹窗的 elderId
+                hasShownDialogForCurrentShare = true
+                lastPopupElderId = location.elderId
                 Log.d("PrivateChatScreen", "✅ [WebSocket] 已触发弹窗，等待用户操作")
             } else {
                 Log.d("PrivateChatScreen", "⚠️ [WebSocket] 忽略不匹配的分享 - elderId=${location.elderId}, 当前guardianId=$guardianId")
@@ -194,27 +199,25 @@ fun PrivateChatScreen(
     }
     
     LaunchedEffect(guardianId) {
-        Log.d("PrivateChatScreen", "🔗 [初始化] 私聊界面初始化，guardianId=$guardianId, guardianName=$guardianName")
-        Log.d("PrivateChatScreen", "🔗 [初始化] chatViewModel 是否存在: ${chatViewModel != null}")
-        Log.d("PrivateChatScreen", "🔗 [初始化] isElderMode: $isElderMode")
+                    Log.d("PrivateChatScreen", "🔗 [初始化] 私聊界面初始化，guardianId=$guardianId")
+        
+        // ⭐ 关键修复：每次进入私聊界面时，重置卡片可见性
+        isCardVisible = true
         
         // ⭐ 关键修复：同步长辈模式状态到 ChatViewModel
         if (chatViewModel != null) {
             chatViewModel.syncElderMode(isElderMode)
         }
         
-        // ⭐ 新增：获取当前用户ID
+        // ⭐ 获取当前用户ID
         val currentUserId = com.example.myapplication.MyApplication.tokenManager.getUserId()
-        Log.d("PrivateChatScreen", "🔗 [初始化] currentUserId: $currentUserId")
         
         // ⭐ 新增：检查分享是否已被处理（用户在外层弹窗点击了“立即叫车”）
         try {
             val prefs = context.getSharedPreferences("taxi_destination", android.content.Context.MODE_PRIVATE)
             isShareProcessed = prefs.getBoolean("share_processed_$guardianId", false)
             if (isShareProcessed) {
-                Log.d("PrivateChatScreen", "✅ [初始化] 检测到分享已被处理，卡片将显示为已同意状态")
-                // ⭐ 关键修复：如果分享已被处理，则标记已弹过窗，避免重复弹窗
-                hasShownDialogForCurrentShare = true
+                Log.d("PrivateChatScreen", "✅ [初始化] 检测到分享已被处理")
             }
         } catch (e: Exception) {
             Log.e("PrivateChatScreen", "❌ [初始化] 读取 share_processed 标记失败", e)
@@ -222,8 +225,6 @@ fun PrivateChatScreen(
         
         if (chatViewModel != null) {
             val currentSharedLocation = chatViewModel.sharedLocation.value
-            Log.d("PrivateChatScreen", "🔗 [初始化] 当前 sharedLocation: ${currentSharedLocation?.favoriteName ?: "null"}")
-            Log.d("PrivateChatScreen", "🔗 [初始化] currentSharedLocation?.elderId: ${currentSharedLocation?.elderId}, guardianId: $guardianId")
             
             // ⭐ 关键修复：如果 StateFlow 为空，尝试从 SharedPreferences 恢复
             if (currentSharedLocation == null || currentSharedLocation.elderId != guardianId) {
@@ -231,16 +232,8 @@ fun PrivateChatScreen(
                 try {
                     val prefs = context.getSharedPreferences("shared_location_cache", android.content.Context.MODE_PRIVATE)
                     
-                    // ⭐ 关键修复：长辈端应该使用 currentUserId 作为缓存 key
-                    val cacheKey = if (isElderMode) currentUserId else guardianId
+                    val cacheKey = guardianId
                     val cachedElderId = prefs.getLong("elderId_${cacheKey}", -1L)
-                    
-                    Log.d("PrivateChatScreen", "🔍 [缓存恢复] cacheKey=$cacheKey, cachedElderId=$cachedElderId, isElderMode=$isElderMode, currentUserId=$currentUserId")
-                    
-                    // ⭐ 新增：打印所有缓存的 key，用于调试
-                    val allEntries = prefs.all
-                    Log.d("PrivateChatScreen", "🔍 [缓存恢复] SharedPreferences 中所有的 keys: ${allEntries.keys}")
-                    Log.d("PrivateChatScreen", "🔍 [缓存恢复] 所有 entries: $allEntries")
                     
                     if (cachedElderId == cacheKey) {
                         val elderName = prefs.getString("elderName_${cacheKey}", "") ?: ""
@@ -251,11 +244,12 @@ fun PrivateChatScreen(
                         val elderCurrentLat = prefs.getFloat("elderCurrentLat_${cacheKey}", 0f).toDouble()
                         val elderCurrentLng = prefs.getFloat("elderCurrentLng_${cacheKey}", 0f).toDouble()
                         val elderLocationTimestamp = prefs.getLong("elderLocationTimestamp_${cacheKey}", 0L)
-                        // ⭐ 关键修复：从缓存恢复 orderId
+                        // ⭐ 关键修复：从缓存恢复 orderId 和 orderStatus
                         val orderId = prefs.getLong("orderId_${cacheKey}", -1L).takeIf { it != -1L }
+                        val orderStatus = prefs.getInt("orderStatus_${cacheKey}", 0)  // ⭐ 新增：恢复订单状态
                         
                         if (favoriteName.isNotBlank()) {
-                            Log.d("PrivateChatScreen", "✅ [初始化] 从本地缓存恢复分享地点：$favoriteName, orderId=$orderId")
+                            Log.d("PrivateChatScreen", "✅ [初始化] 从本地缓存恢复分享地点：$favoriteName")
                             
                             val restoredLocation = com.example.myapplication.presentation.chat.ChatViewModel.SharedLocationInfo(
                                 elderId = cachedElderId,
@@ -268,7 +262,7 @@ fun PrivateChatScreen(
                                 elderCurrentLng = if (elderCurrentLng != 0.0) elderCurrentLng else null,
                                 elderLocationTimestamp = if (elderLocationTimestamp != 0L) elderLocationTimestamp else null,
                                 orderId = orderId,  // ⭐ 关键修复：从缓存恢复订单ID
-                                orderStatus = if (isShareProcessed) 1 else 0  // ⭐ 如果已处理，则设为已同意状态
+                                orderStatus = orderStatus  // ⭐ 关键修复：从缓存恢复订单状态（0-待确认 1-已同意）
                             )
                             
                             // ⭐ 关键修复：从缓存恢复时，标记已弹过窗，避免触发 LaunchedEffect 弹窗
@@ -371,61 +365,44 @@ fun PrivateChatScreen(
     // ⭐ 修复：亲友端和长辈端都应该显示卡片
                 val currentCardLocation = cardLocation  // ⭐ 关键修复：先赋值给局部变量
                 
-                // ⭐ 关键日志：详细记录卡片显示判断逻辑
-                Log.d("PrivateChatScreen", "🔍 [卡片显示检查] === 开始检查 ===")
-                Log.d("PrivateChatScreen", "🔍 [卡片显示检查] currentCardLocation != null: ${currentCardLocation != null}")
-                Log.d("PrivateChatScreen", "🔍 [卡片显示检查] guardianId != null: ${guardianId != null}")
-                Log.d("PrivateChatScreen", "🔍 [卡片显示检查] isElderMode: $isElderMode")
-                
-                if (currentCardLocation == null) {
-                    Log.w("PrivateChatScreen", "⚠️ [卡片显示检查] currentCardLocation 为 null，跳过卡片渲染")
-                    Log.w("PrivateChatScreen", "⚠️ [卡片显示检查] 请检查：1) ChatViewModel.sharedLocation 是否有值 2) SharedPreferences 缓存是否恢复成功")
-                }
-                
+                // ⭐ 修复35-36：精简卡片显示检查日志
                 if (currentCardLocation != null && guardianId != null) {
                     val currentUserId = com.example.myapplication.MyApplication.tokenManager.getUserId()
-                    Log.d("PrivateChatScreen", "🔍 [卡片显示检查] currentUserId: $currentUserId")
-                    Log.d("PrivateChatScreen", "🔍 [卡片显示检查] cardLocation.elderId: ${currentCardLocation.elderId}")
-                    Log.d("PrivateChatScreen", "🔍 [卡片显示检查] guardianId: $guardianId")
-                    
-                    val shouldShowCard = currentCardLocation.elderId == guardianId || currentCardLocation.elderId == currentUserId
-                    Log.d("PrivateChatScreen", "🔍 [卡片显示检查] elderId == guardianId: ${currentCardLocation.elderId == guardianId}")
-                    Log.d("PrivateChatScreen", "🔍 [卡片显示检查] elderId == currentUserId: ${currentCardLocation.elderId == currentUserId}")
-                    Log.d("PrivateChatScreen", "🔍 [卡片显示检查] shouldShowCard: $shouldShowCard")
-                    
-                    if (!shouldShowCard) {
-                        Log.w("PrivateChatScreen", "⚠️ [卡片显示检查] shouldShowCard 为 false，卡片不会显示")
-                        Log.w("PrivateChatScreen", "⚠️ [卡片显示检查] elderId (${currentCardLocation.elderId}) 既不等于 guardianId ($guardianId) 也不等于 currentUserId ($currentUserId)")
-                    }
+                    val shouldShowCard = (currentCardLocation.elderId == guardianId || currentCardLocation.elderId == currentUserId) && isCardVisible
                     
                     if (shouldShowCard) {
                         item {
-                            Log.d("PrivateChatScreen", "🎴 [UI] 渲染分享地点卡片：${currentCardLocation.favoriteName}, 订单状态: ${currentCardLocation.orderStatus}")
+                            Log.d("PrivateChatScreen", "🎴 [UI] 渲染分享地点卡片：${currentCardLocation.favoriteName}")
                             
                             SharedLocationCard(
                                 locationName = currentCardLocation.favoriteName,
                                 elderName = guardianName,
-                                orderStatus = currentCardLocation.orderStatus,  // ⭐ 新增：传递订单状态
-                                orderId = currentCardLocation.orderId,  // ⭐ 新增：传递订单ID
+                                orderStatus = currentCardLocation.orderStatus,
+                                orderId = currentCardLocation.orderId,
                                 startAddress = currentCardLocation.elderCurrentLat?.let { 
                                     "当前位置 (${String.format("%.6f", it)}, ${String.format("%.6f", currentCardLocation.elderCurrentLng ?: 0.0)})" 
-                                },  // ⭐ 新增：起点（长辈当前位置）
-                                destAddress = currentCardLocation.favoriteAddress.takeIf { !it.isNullOrBlank() } ?: currentCardLocation.favoriteName,  // ⭐ 新增：终点（收藏地点）
+                                },
+                                destAddress = currentCardLocation.favoriteAddress.takeIf { !it.isNullOrBlank() } ?: currentCardLocation.favoriteName,
+                                isElderMode = isElderMode,
                                 onUseForTaxi = {
                                     Log.d("PrivateChatScreen", "🚕 [用户操作] 点击一键填充到打车界面")
                                     onNavigateToHomeWithDestination?.invoke(currentCardLocation.favoriteName, currentCardLocation.latitude, currentCardLocation.longitude)
-                                    Log.d("PrivateChatScreen", "✅ [用户操作] 已跳转到打车界面，卡片保持显示")
                                 },
                                 onViewOrderDetail = { orderId ->
-                                    // ⭐ 关键修复：已确认订单，直接跳转到行程追踪界面
                                     Log.d("PrivateChatScreen", "📋 [用户操作] 查看订单详情，orderId=$orderId")
                                     onNavigateToOrderTracking?.invoke(orderId)
                                 },
                                 onDismiss = {
                                     Log.d("PrivateChatScreen", "❌ [用户操作] 用户关闭了分享卡片")
-                                    // ⭐ 修复：清除 ChatViewModel 中的 sharedLocation
-                                    chatViewModel?.clearSharedLocation()
-                                    Log.d("PrivateChatScreen", "✅ [用户操作] 已清除 sharedLocation，卡片消失")
+                                    isCardVisible = false
+                                },
+                                onConfirmOrder = { orderId ->
+                                    Log.d("PrivateChatScreen", "✅ [用户操作] 长辈同意代叫车，orderId=$orderId")
+                                    onConfirmProxyOrder?.invoke(orderId, true)
+                                },
+                                onRejectOrder = { orderId ->
+                                    Log.d("PrivateChatScreen", "❌ [用户操作] 长辈拒绝代叫车，orderId=$orderId")
+                                    onConfirmProxyOrder?.invoke(orderId, false)
                                 }
                             )
                         }
@@ -594,17 +571,8 @@ fun PrivateChatScreen(
         }
     }
     
-    // ⭐ 新增：长辈位置查看对话框
-    if (showElderLocationDialog) {
-        ElderLocationDialog(
-            elderName = guardianName,
-            elderLocation = elderLocation,
-            onDismiss = { 
-                showElderLocationDialog = false
-                elderLocation = null
-            }
-        )
-    }
+    // ⭐ 修复19：删除无用的 ElderLocationDialog（从未被调用）
+    // 该对话框功能已由 onNavigateToElderLocation 回调实现
     
     // ⭐ 新增：收藏分享弹窗（类似代打车全局弹窗）
     if (showShareDialog && pendingShareLocation != null) {
@@ -636,7 +604,7 @@ fun PrivateChatScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        "$pendingElderName 分享了以下地点给您：",
+                        text = "${pendingElderName} 分享了以下地点给您：",
                         fontSize = 16.sp,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -652,22 +620,25 @@ fun PrivateChatScreen(
                             modifier = Modifier.padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Text(
-                                text = pendingShareLocation!!.first,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Text(
-                                text = "纬度: ${String.format("%.6f", pendingShareLocation!!.second)}",
-                                fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = "经度: ${String.format("%.6f", pendingShareLocation!!.third)}",
-                                fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            // ⭐ 修复7：安全访问 pendingShareLocation
+                            pendingShareLocation?.let { location ->
+                                Text(
+                                    text = location.name,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "纬度: ${String.format("%.6f", location.latitude)}",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "经度: ${String.format("%.6f", location.longitude)}",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                     
@@ -683,29 +654,28 @@ fun PrivateChatScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        val (name, lat, lng) = pendingShareLocation!!
-                        Log.d("PrivateChatScreen", "🚕 [弹窗] 用户点击立即叫车：$name")
-                        
-                        // ⭐ 修复：不再设置 sharedLocation，直接使用 chatViewModel.sharedLocation
-                        // sharedLocation = pendingShareLocation  // ❌ 已删除
-                        
-                        // 跳转到首页叫车
-                        onNavigateToHomeWithDestination?.invoke(name, lat, lng)
-                        
-                        // ⭐ 关键修复：关闭弹窗，并标记分享已被处理
-                        showShareDialog = false
-                        isShareProcessed = true  // ⭐ 标记分享已被处理
-                        
-                        // ⭐ 持久化保存 share_processed 标记
-                        try {
-                            val prefs = context.getSharedPreferences("taxi_destination", android.content.Context.MODE_PRIVATE)
-                            prefs.edit()
-                                .putBoolean("share_processed_$guardianId", true)
-                                .apply()
-                            Log.d("PrivateChatScreen", "✅ [弹窗] 已持久化 share_processed 标记")
-                        } catch (e: Exception) {
-                            Log.e("PrivateChatScreen", "❌ [弹窗] 保存 share_processed 失败", e)
-                        }
+                // ⭐ 修复6-8：安全解包，避免强制解包崩溃
+                pendingShareLocation?.let { location ->
+                    pendingShareLocation = null
+                    showShareDialog = false
+                    isShareProcessed = true
+                    
+                    Log.d("PrivateChatScreen", "🚕 [弹窗] 用户点击立即叫车：${location.name}")
+                    
+                    // 跳转到首页叫车
+                    onNavigateToHomeWithDestination?.invoke(location.name, location.latitude, location.longitude)
+                    
+                    // 持久化保存 share_processed 标记
+                    try {
+                        val prefs = context.getSharedPreferences("taxi_destination", android.content.Context.MODE_PRIVATE)
+                        prefs.edit()
+                            .putBoolean("share_processed_$guardianId", true)
+                            .apply()
+                        Log.d("PrivateChatScreen", "✅ [弹窗] 已持久化 share_processed 标记")
+                    } catch (e: Exception) {
+                        Log.e("PrivateChatScreen", "❌ [弹窗] 保存 share_processed 失败", e)
+                    }
+                }
                     },
                     modifier = Modifier.height(48.dp)
                 ) {
@@ -741,17 +711,18 @@ fun PrivateChatScreen(
 @Composable
 fun SharedLocationCard(
     locationName: String,
-    elderName: String,  // ⭐ 新增：长辈姓名
-    orderStatus: Int? = null,  // ⭐ 新增：订单状态（0-待确认 1-已同意 2-行程中 3-已结束）
-    orderId: Long? = null,  // ⭐ 新增：订单ID
-    startAddress: String? = null,  // ⭐ 新增：起点地址
-    destAddress: String? = null,  // ⭐ 新增：终点地址
+    elderName: String,
+    orderStatus: Int? = null,
+    orderId: Long? = null,
+    startAddress: String? = null,
+    destAddress: String? = null,
+    isElderMode: Boolean = false,
     onUseForTaxi: () -> Unit,
-    onViewOrderDetail: ((Long) -> Unit)? = null,  // ⭐ 新增：查看订单详情回调
-    onDismiss: () -> Unit = {}  // ⭐ 新增：关闭回调
+    onViewOrderDetail: ((Long) -> Unit)? = null,
+    onDismiss: () -> Unit = {},
+    onConfirmOrder: ((Long) -> Unit)? = null,
+    onRejectOrder: ((Long) -> Unit)? = null
 ) {
-    Log.d("PrivateChatScreen", "🎴 [SharedLocationCard] 渲染卡片 - 地点: $locationName, 长辈: $elderName, 订单状态: $orderStatus")
-    Log.d("PrivateChatScreen", "🎴 [SharedLocationCard] 起点: $startAddress, 终点: $destAddress")
     
     Card(
         modifier = Modifier
@@ -975,37 +946,91 @@ fun SharedLocationCard(
             // ⭐ 根据订单状态显示不同的按钮
             if (orderStatus == 0 || orderStatus == null) {
                 // 待确认或未知状态：显示操作按钮
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Button(
-                        onClick = onUseForTaxi,
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
-                        )
+                    // ⭐ 第一行：同意和拒绝按钮（长辈端确认订单）
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Place,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("一键填充到打车界面")
+                        Button(
+                            onClick = {
+                                if (orderId != null && onConfirmOrder != null) {
+                                    onConfirmOrder(orderId)
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF4CAF50)  // 绿色
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Check,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("同意")
+                        }
+                        
+                        OutlinedButton(
+                            onClick = {
+                                if (orderId != null && onRejectOrder != null) {
+                                    onRejectOrder(orderId)
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = Color(0xFFF44336)  // 红色
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("拒绝")
+                        }
                     }
                     
-                    OutlinedButton(
-                        onClick = onDismiss,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("稍后再说")
+                    // ⭐ 第二行：一键填充到打车界面和稍后再说（仅亲友端显示）
+                    if (!isElderMode) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = onUseForTaxi,
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Place,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("一键填充到打车界面")
+                            }
+                            
+                            OutlinedButton(
+                                onClick = onDismiss,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("稍后再说")
+                            }
+                        }
                     }
                 }
             } else {
@@ -1138,150 +1163,4 @@ private fun formatTime(timestamp: String): String {
     } catch (e: Exception) {
         "--:--"
     }
-}
-
-/**
- * ⭐ 新增：长辈位置查看对话框（显示长辈实时位置）
- */
-@Composable
-fun ElderLocationDialog(
-    elderName: String,
-    elderLocation: Pair<Double, Double>?,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Default.MyLocation,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(24.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("查看 $elderName 的位置")
-            }
-        },
-        text = {
-            Column(
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                if (elderLocation != null) {
-                    val (lat, lng) = elderLocation
-                    
-                    // 位置信息卡片
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = Color(0xFFE3F2FD)  // 淡蓝色背景
-                        ),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Place,
-                                    contentDescription = null,
-                                    tint = Color(0xFF1976D2),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "位置坐标",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = Color(0xFF1976D2)
-                                )
-                            }
-                            
-                            Text(
-                                text = "纬度: ${String.format("%.6f", lat)}",
-                                fontSize = 14.sp,
-                                color = Color(0xFF424242)
-                            )
-                            Text(
-                                text = "经度: ${String.format("%.6f", lng)}",
-                                fontSize = 14.sp,
-                                color = Color(0xFF424242)
-                            )
-                            
-                            Spacer(modifier = Modifier.height(4.dp))
-                            
-                            // 更新时间提示
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.NotificationsActive,
-                                    contentDescription = null,
-                                    tint = Color(0xFF4CAF50),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "实时更新中",
-                                    fontSize = 12.sp,
-                                    color = Color(0xFF4CAF50),
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-                        }
-                    }
-                    
-                    Spacer(modifier = Modifier.height(12.dp))
-                    
-                    // 提示文字
-                    Text(
-                        text = "💡 提示：在首页地图中可以查看更详细的路线和位置信息",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                } else {
-                    // 加载状态
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(40.dp),
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = "正在获取位置信息...",
-                            fontSize = 14.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    // ⭐ TODO: 跳转到首页并聚焦长辈位置
-                    onDismiss()
-                }
-            ) {
-                Text("在地图中查看")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("关闭")
-            }
-        }
-    )
 }

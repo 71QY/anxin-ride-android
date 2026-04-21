@@ -12,6 +12,7 @@ data class WsMessage(
     @SerialName("success") val success: Boolean? = null,
     @SerialName("message") val message: String? = null,
     @SerialName("orderId") val orderId: Long? = null,
+    @SerialName("userId") val userId: Long? = null,  // ⭐ 新增：乘车人ID（长辈）
     @SerialName("timestamp") val timestamp: Long? = null,
     
     // ORDER_ACCEPTED 专用字段
@@ -42,7 +43,10 @@ data class WsMessage(
     @SerialName("elderUserId") val elderUserId: Long? = null,
     @SerialName("confirmed") val confirmed: Boolean? = null,
     @SerialName("rejectReason") val rejectReason: String? = null,
-    @SerialName("confirmTime") val confirmTime: String? = null
+    @SerialName("confirmTime") val confirmTime: String? = null,
+    
+    // TRIP_COMPLETED 专用字段
+    @SerialName("finalAmount") val finalAmount: Double? = null  // ⭐ 新增：最终费用
 ) {
     companion object {
         const val TYPE_CONNECTED = "connected"

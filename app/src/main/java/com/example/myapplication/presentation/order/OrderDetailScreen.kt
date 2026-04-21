@@ -78,7 +78,8 @@ fun OrderDetailScreen(
                     Spacer(modifier = Modifier.height(12.dp))
                     Text("状态：${getStatusText(order!!.status)}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary)
                     Spacer(modifier = Modifier.height(24.dp))
-                    if (order!!.status == 0) {
+                    // ⭐ 修复：在找到司机前（status < 3）都可以取消订单
+                    if (order!!.status < 3) {
                         Button(
                             onClick = { viewModel.cancelOrder(orderId) },
                             modifier = Modifier.fillMaxWidth()
