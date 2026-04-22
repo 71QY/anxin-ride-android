@@ -601,18 +601,18 @@ fun ProfileScreen(
                                         // 后端返回 /api/xxx，直接使用（BASE_URL已包含/api/）
                                         // 旧后端地址 (A): cleanUrl.startsWith("/api/") -> "http://10.241.75.80:8080$cleanUrl"
                                         // 中间后端地址 (B): cleanUrl.startsWith("/api/") -> "http://192.168.189.57:8080$cleanUrl"
-                                        // 新后端地址 (C):
-                                        cleanUrl.startsWith("/api/") -> "http://10.241.75.80:8080$cleanUrl"
+                                        // 当前WiFi网络 (C) - 后端服务器IP:
+                                        cleanUrl.startsWith("/api/") -> "http://10.184.246.80:8080$cleanUrl"
                                         // 以 / 开头的其他路径
                                         // 旧后端地址 (A): cleanUrl.startsWith("/") -> "http://10.241.75.80:8080/api$cleanUrl"
                                         // 中间后端地址 (B): cleanUrl.startsWith("/") -> "http://192.168.189.57:8080/api$cleanUrl"
-                                        // 新后端地址 (C):
-                                        cleanUrl.startsWith("/") -> "http://10.241.75.80:8080/api$cleanUrl"
+                                        // 当前WiFi网络 (C) - 后端服务器IP:
+                                        cleanUrl.startsWith("/") -> "http://10.184.246.80:8080/api$cleanUrl"
                                         // 不带 / 的相对路径
                                         // 旧后端地址 (A): else -> "http://10.241.75.80:8080/api/$cleanUrl"
                                         // 中间后端地址 (B): else -> "http://192.168.189.57:8080/api/$cleanUrl"
-                                        // 新后端地址 (C):
-                                        else -> "http://10.241.75.80:8080/api/$cleanUrl"
+                                        // 当前WiFi网络 (C) - 后端服务器IP:
+                                        else -> "http://10.184.246.80:8080/api/$cleanUrl"
                                     }
                                 } else null
                                 

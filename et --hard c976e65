@@ -1,0 +1,20 @@
+[33m4b2273e[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmaster[m[33m, [m[1;31morigin/master[m[33m, [m[1;31morigin/HEAD[m[33m)[m 最终版421
+[33mc976e65[m last421终于修好
+[33m93ddf51[m 修复代叫车WebSocket消息字段417
+[33m409f71e[m feat: 418last
+[33mbdcdfaf[m feat:418收藏功能修到一半
+[33mbbfcbce[m 417修到一半
+[33m166c5e4[m last5: 完成代叫车行程同步和司机拒绝后重新派单功能
+[33m297ee98[m 416last2.0版
+[33mc56fd25[m 移除大文件,更新.gitignore
+[33m5f365fc[m 416last1.0版
+[33m88ea1f0[m 416最终版-支持直接接收ORDER_ACCEPTED消息
+[33m8f1f737[m 416最终版
+[33m888e607[m 提交当前所有修改
+[33m6ec7d75[m 修复智能体聊天VerifyError崩溃：回退到last4.5稳定版本并修正数据模型
+[33m8018173[m 保存当前多图片功能版本（VerifyError 待修复）
+[33mda83bc0[m last4.5
+[33m740e848[m last3
+[33m2a5b411[m chore: save current version cache before rollback
+[33m0eaf072[m last2
+[33mc6a7d9c[m last1

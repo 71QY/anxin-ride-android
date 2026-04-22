@@ -406,20 +406,20 @@ class ProfileViewModel @Inject constructor(
                             // 后端返回 /api/xxx，直接拼接 BASE_URL（去掉末尾的 /api/）
                             // 旧后端地址 (A): "http://10.241.75.80:8080$avatarUrl"
                             // 中间后端地址 (B): "http://192.168.189.57:8080$avatarUrl"
-                            // 新后端地址 (C):
-                            "http://10.241.75.80:8080$avatarUrl"
+                            // 当前WiFi网络 (C) - 后端服务器IP:
+                            "http://10.184.246.80:8080$avatarUrl"
                         } else if (avatarUrl.startsWith("/")) {
                             // 以 / 开头的其他路径
                             // 旧后端地址 (A): "http://10.241.75.80:8080/api$avatarUrl"
                             // 中间后端地址 (B): "http://192.168.189.57:8080/api$avatarUrl"
-                            // 新后端地址 (C):
-                            "http://10.241.75.80:8080/api$avatarUrl"
+                            // 当前WiFi网络 (C) - 后端服务器IP:
+                            "http://10.184.246.80:8080/api$avatarUrl"
                         } else {
                             // 不带 / 的相对路径
                             // 旧后端地址 (A): "http://10.241.75.80:8080/api/$avatarUrl"
                             // 中间后端地址 (B): "http://192.168.189.57:8080/api/$avatarUrl"
-                            // 新后端地址 (C):
-                            "http://10.241.75.80:8080/api/$avatarUrl"
+                            // 当前WiFi网络 (C) - 后端服务器IP:
+                            "http://10.184.246.80:8080/api/$avatarUrl"
                         }
                         
                         Log.d("ProfileViewModel", "✅ 头像上传成功")
